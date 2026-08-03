@@ -45,7 +45,7 @@ try {
   }
 
   Case 'a repo living under an excluded-looking path still gets censused' {
-    # Regression, found against a real production surface: exclusions were matched on the
+    # Regression, found against the real appraisal surface: exclusions were matched on the
     # ABSOLUTE path, so a repo whose location contains an excluded segment excluded its own
     # contents. Every Fleet worktree lives under ~/.codex/worktrees/ - both `.codex` and
     # `worktrees` are exclusion terms - so every worktree census reported zero findings.

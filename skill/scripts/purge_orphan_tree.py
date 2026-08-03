@@ -3,7 +3,7 @@
 Why this exists (LESSONS 2026-07-22): robocopy /PURGE and /MIR traverse directory
 junctions, and a Get-ChildItem reparse re-scan-to-zero gate misses junctions under
 long paths (silent enumeration failure). That combination deleted 1,899 tracked
-files from the main your-repo checkout.
+files from the main Harken-v2 checkout.
 
 CRITICAL (caught by this file's own self-test): os.walk(followlinks=False) is NOT
 junction-safe on Windows — junctions are not symlinks, so walk descends into them.

@@ -214,6 +214,6 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$HOME/.codex/skills/fle
 Run Pi's test separately when GLM is enabled. Local wrapper, PATH, or compatibility
 failures must be repaired before full-review dispatch; only a provider outage after a
 verified launch is `no_contest`. Never claim five-voice coverage with a missing lane.
-No commits or pushes unless requested. Append new active guidance to Codex Fleet's
+The Codex "Non-Negotiable Contract" (Definition of Done incl. adversarial review, Lane Utilization, maximally-parallel plans) governs Claude runs unchanged. No commits or pushes unless requested. Append new active guidance to Codex Fleet's
 LESSONS file. Claude's old LESSONS file was merged into it on 2026-07-31;
 `adapters/claude/LESSONS.md` is now only a pointer.

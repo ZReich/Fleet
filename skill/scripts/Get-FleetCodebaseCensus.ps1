@@ -28,7 +28,7 @@ $repo = (Resolve-Path -LiteralPath $RepoPath).Path
 # meant the repo's own location could exclude its entire contents: every Fleet worktree
 # lives under ~/.codex/worktrees/, whose prefix contains both `.codex` and `worktrees`, so
 # a census of any worktree silently reported zero findings on every dimension. Found
-# against a real production surface - 0 oversize files reported, 67 actual, largest 2190
+# against the real appraisal surface - 0 oversize files reported, 67 actual, largest 2190
 # lines. A refactor ledger that says "nothing to do" is the worst possible false green.
 $excluded = '(^|[\\/])(node_modules|target|dist|build|\.git|\.fleet|\.claude|\.codex|worktrees|vendor|__pycache__)([\\/]|$)'
 

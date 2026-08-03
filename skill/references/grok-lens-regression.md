@@ -19,7 +19,7 @@ Hunt specifically for:
   converts a previously-surfaced failure into a quiet wrong answer.
 - **Masked semantics.** A mock, stub, `resolve(true)`, or sample payload that makes a
   changed data path LOOK like it still works while the real changed-rows / affected-rows /
-  persisted-value semantics differ from base. This lens exists because a no-op record re-save
+  persisted-value semantics differ from base. This lens exists because a no-op comp re-save
   — mocks returning `resolve(true)` over a real changed-rows change — passed a five-voice
   panel and 1,800 tests (LESSONS 2026-07-25). Assume that failure mode is present until you
   have ruled it out.

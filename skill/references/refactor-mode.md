@@ -3,7 +3,7 @@
 Every review surface in this framework is DIFF-scoped: reviewers get `final.diff` and
 `touched-files.txt`, Fallow runs `--changed-since`, and the imported Pocock skill diffs
 against a fixed point. All of it answers "is this change clean?" and none of it can ask
-"is this codebase clean?" That gap is why a large subsystem refactor shipped foundation
+"is this codebase clean?" That gap is why the appraisal refactor shipped foundation
 N0-N3 and left the de-dup/split waves deferred: there was no mode for the second question.
 
 Refactor mode inverts the scope. The input is a codebase, the output is a ranked ledger

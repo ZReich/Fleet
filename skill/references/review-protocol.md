@@ -133,7 +133,7 @@ launch. Sol/Terra are Codex lanes and run outside this wrapper cap as before.
      diff-scoped regression lens, not "is the new code good": trace behavior that worked
      at base and no longer does, silent fallbacks that swallow a changed contract, and
      sample/mock data or `resolve(true)` stubs masking real changed-rows semantics. This
-     lens caught the no-op record re-save CRITICAL a five-voice panel + 1,800 tests passed
+     lens caught the no-op comp re-save CRITICAL a five-voice panel + 1,800 tests passed
      over (LESSONS 2026-07-25). Read the referenced source read-only and compare against
      base.
 

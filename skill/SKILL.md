@@ -5,8 +5,8 @@ description: Token-efficient Codex-native orchestration with Sol-selected rigor,
 
 # Fleet Orchestration for Codex
 
-This is the Codex-side contract. A Claude Code adapter lives in
-`adapters/claude/SKILL.md`.
+Source lineage: adapted from `$env:USERPROFILE/.claude/skills/fleet/SKILL.md`.
+Design doc: `$env:USERPROFILE/Documents/docs/superpowers/specs/2026-07-03-fleet-orchestration-design.md`.
 
 ## Purpose
 
@@ -35,6 +35,66 @@ machine-readable review metadata is parsed wrapper-side or requested as a small 
 block after the markdown, never as the primary output contract. Before scoring or
 routing any model, verify the harness fits the task type: a low score in a mismatched
 harness is a HARNESS finding, not a model finding.
+
+## Non-Negotiable Contract (read first, enforce last)
+
+This block is the short list the orchestrator MUST satisfy on EVERY run, no matter what
+the deep sections below say or how long the run got. The detail lives downstream; the
+mandates live here so a long run cannot drift past them. Before you say "done", "ready
+to merge", or "ready to push", every line here is already true — or you are not done.
+
+### Definition of Done — no completion claim without these quoted lines
+
+A run is NOT complete, mergeable, or pushable until each gate below has RUN against the
+shipped diff and its summary line is quoted verbatim in the Final Report. A missing line
+means the gate did not run: that is a blocker, not a pass. Never substitute your own
+reproductions, tests, or "I verified it myself" for the review gate — self-review is not
+an independent voice; it is the exact claim the review exists to check.
+
+- `fallow audit` (JS/TS changed code, from the package root) → quote `fallow: N new
+  findings`; non-JS/TS quote `static-gates: N/5 measured` per gate-adapters.md.
+- `Assert-FleetFileSize.ps1 -BaseRef <base>` → quote the `filesize:` line.
+- `Assert-FleetLaneSpans.ps1 -RunId <id> -LedgerPath <l> -ExpectedLaneManifest <m>` →
+  quote its summary line (proves every expected lane actually ran, not just the cheap ones).
+- `Assert-FleetAdversarialReview.ps1 -Repo <repo> -BaseRef <base>` → quote its summary
+  line. This proves review receipts EXIST and COVER the current diff (older-diff receipts
+  do not count). MICRO is the ONLY exemption and must say so: "MICRO: deterministic gates
+  only". Everything above MICRO needs real voices — see the Lane Utilization Contract.
+- Tests / build the repo defines → quote the count WITH a denominator (`tests: 274/274`);
+  a zero or missing denominator did not run.
+
+The adversarial review is a STANDING step after every coding/fix/config wave — not
+something the user has to ask for, and not optional because tests are green. Runs that
+shipped with zero review receipts are the exact failure this gate exists to stop (see
+"Adversarial Review Is Not Optional").
+
+### Lane Utilization Contract — the tier names the voices, and you WILL dispatch them
+
+Running one model when the tier calls for five is a defect, not a shortcut. Per tier,
+these lanes MUST be exercised through the canonical wrappers — never raw CLIs, never a
+single-model collapse:
+
+| Tier | Voices that MUST run |
+| --- | --- |
+| MICRO | deterministic gates only — state it explicitly, zero model voices |
+| LIGHT | Sol + fresh Terra; +1 cross-family (GLM via `Invoke-PiGlm.ps1`) when behavior is touched |
+| STANDARD | Sol + Terra + one specialist third voice by change type |
+| FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security triggers add `[GLM 5.2 · SECURITY]` + `[KIMI K3 · SECURITY]` by default. |
+
+Implementation default for non-design work is Grok 4.5 via `Invoke-Grok45.ps1` (one
+cohesive charter + one structured self-review) — NOT Terra implementing inline. Design,
+API, and architecture judgment route to Sol and never to Grok. A down voice is
+substituted (GLM cross-family) and recorded `voice_substituted`, never silently dropped.
+Every dispatched lane is a visible model-first labeled task. See Routing for the full table.
+
+### Plans are maximally parallel by default
+
+Every wave plan MINIMIZES the critical path: maximize the tasks that can run
+concurrently, minimize dependency edges, and split disjoint file scopes into separate
+same-wave lanes. A dependency edge is a cost that must be justified — task B depends on
+task A ONLY when B genuinely consumes A's output or writes the same files. "Feels safer
+to serialize" is not a dependency. See Phase 2 for the wave-graph fields and the
+anti-serialization validation gate.
 
 ## Modes / Tiers
 
@@ -161,7 +221,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE/.codex
 ```
 
 `Invoke-PiGlm.ps1` resolves Pi from PATH, then the newest installed
-`$env:NVM_HOME\v*\pi.cmd`, so your project can remain on Node 20 while Pi uses Node 22.
+`$env:NVM_HOME\v*\pi.cmd`, so Harken can remain on Node 20 while Pi uses Node 22.
 Install Pi under a compatible NVM Node version with:
 
 ```powershell
@@ -234,6 +294,15 @@ escalation conditions using [references/mode-selection.md](references/mode-selec
 Do not spend a separate call on classification. Record its session ID and write its locked plan to
 `docs/superpowers/plans/YYYY-MM-DD-<topic>-fleet.md`.
 
+Instruct Sol to emit a MAXIMALLY PARALLEL wave graph — this is a stated planning
+objective, not a nicety. Sol structures the work so the most tasks possible run
+concurrently in the fewest waves: partition the change into disjoint-file-scope tasks
+that can proceed independently, and add a dependency edge ONLY where task B genuinely
+consumes task A's output or writes the same files. The plan carries a one-line
+`parallel width: <max concurrent tasks> across <N> waves; critical path <M> tasks` and,
+for every dependency edge, a half-line reason. An unexplained edge, or a serial chain of
+same-scope-independent tasks, is a planning defect to send back — not something to build.
+
 Every charter also carries a 3-5 line INTENT BLOCK (Fable directive 2026-07-23):
 what the user is actually after, why this task exists, and what failure looks like
 for the user. Workers exercise judgment at spec edges from intent, not guesswork —
@@ -265,6 +334,10 @@ Validation gate before dispatch:
 - new paths are marked new
 - same-wave file scopes are disjoint
 - merge-order dependencies are not mistaken for build-order dependencies
+- anti-serialization: every dependency edge carries a reason, and no two tasks with
+  disjoint file scope and no real data dependency sit in different waves. A needless
+  serial chain fails validation and returns to Sol — the default target is minimum
+  critical path, and the plan states its `parallel width` / `critical path` line
 
 After validation, run canonical live transport probes for Opus, GLM, and Grok before
 full/review dispatch. A wrapper/config/PATH failure is a Fleet defect to repair before
@@ -608,7 +681,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\ski
 
 The script calculates scores, rejects inconsistent or duplicate rows, enriches
 Grok telemetry from `~/.grok/logs/unified.jsonl`, serializes concurrent appends,
-and writes UTF-8 without BOM to the repo-root `BENCH-grok45.jsonl` ledger.
+and writes UTF-8 without BOM to
+`$env:USERPROFILE/.codex/skills/fleet/BENCH-grok45.jsonl`. The earlier Claude
+ledger remains historical source material at
+`$env:USERPROFILE/.claude/skills/fleet/BENCH-grok45.md`.
 
 Grok Build OAuth does not expose actual billed cost. Record separate primary,
 Grok, and risk-scaled final-review phase telemetry; leave actual cost null and label the calculated
@@ -854,7 +930,7 @@ Review/read-only prompts must request free-form Markdown and must not demand the
   `%USERPROFILE%\.codex\worktrees\<repo-slug>\<run-or-branch>` (or the session
   scratchpad for throwaway probes) — NEVER as a sibling of the main checkout and
   NEVER anywhere under `Documents\`. Sibling worktrees buried the owner's Documents
-  folder in 30+ `your-repo-*` dirs (caught 2026-07-22). Remove the worktree AND its
+  folder in 30+ `Harken-v2-*` dirs (caught 2026-07-22). Remove the worktree AND its
   directory at run end; a run is not complete while its worktree remains.
 - Before removing a Windows worktree, inspect for junctions with
   `Get-ChildItem -Recurse -Attributes ReparsePoint`; remove junctions themselves
@@ -1046,6 +1122,9 @@ Gating:
 - otherwise Sol may approve after the selected mode's required final verdict
 
 ## Adversarial Review Is Not Optional (owner mark, 2026-07-26)
+
+The Definition of Done at the top of this file is the enforced summary of this section;
+if the two ever disagree, the DoD wins. This section is the rationale and the history.
 
 The review is a STANDING step after every coding/fix/config wave, before any claim of
 done - not something the owner has to ask for. On 2026-07-26 three implementation runs

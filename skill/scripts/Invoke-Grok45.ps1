@@ -1,8 +1,15 @@
 # Canonical Fleet Grok 4.5 transport. All Fleet Grok launches route here.
+# Heartbeat transport (audit fix 2026-08-03): heartbeats are appended as JSONL lines
+# to a SIDECAR file (default <temp>\fleet-grok-heartbeat-<pid>.jsonl, override via
+# -HeartbeatPath), never written to stdout/stderr. This is what previously polluted
+# line 1 of every captured result JSON with PowerShell NativeCommandError noise when
+# a caller redirected 2>&1. The orchestrator still watches liveness by tailing that
+# file; heartbeat_path is echoed in the result JSON for discovery.
 param(
   [string]$Prompt,
   [string]$PromptFile,
   [string]$WorkingDirectory = (Get-Location).Path,
+  [string]$HeartbeatPath,
 
   [ValidateSet("low", "medium", "high", "xhigh", "max")]
   [string]$Effort = "high",
@@ -49,6 +56,8 @@ $ExpectedModel = "grok-4.5"
 $proc = $null
 $ownedPrompt = $null
 $ownedProbePrompt = $null
+$script:heartbeatPath = if (-not [string]::IsNullOrWhiteSpace($HeartbeatPath)) { $HeartbeatPath } else { Join-Path ([IO.Path]::GetTempPath()) ("fleet-grok-heartbeat-" + $PID + ".jsonl") }
+try { Remove-Item -LiteralPath $script:heartbeatPath -Force -ErrorAction SilentlyContinue } catch { }
 $grokHome = if ([string]::IsNullOrWhiteSpace($env:GROK_HOME)) { Join-Path $env:USERPROFILE ".grok" } else { $env:GROK_HOME }
 $modelLogPath = if ($env:FLEET_GROK_MODEL_LOG) { $env:FLEET_GROK_MODEL_LOG } else { Join-Path $grokHome "logs\unified.jsonl" }
 $compatEnvNames = @(
@@ -522,8 +531,11 @@ function Test-StructuredAudit {
 }
 
 function Write-Heartbeat {
+  # Sidecar-file transport only (never stdout/stderr): a caller capturing stdout or
+  # merging 2>&1 must never see a heartbeat line ahead of/inside the result JSON.
   param([double]$Elapsed)
-  [Console]::Error.WriteLine((([ordered]@{ type = "heartbeat"; lane = "grok-4.5"; elapsed_seconds = [math]::Round($Elapsed, 1) }) | ConvertTo-Json -Compress))
+  $line = (([ordered]@{ type = "heartbeat"; lane = "grok-4.5"; elapsed_seconds = [math]::Round($Elapsed, 1) }) | ConvertTo-Json -Compress)
+  try { [IO.File]::AppendAllText($script:heartbeatPath, $line + "`n", (New-Object Text.UTF8Encoding($false))) } catch { }
 }
 
 function Read-SessionLogEvidence {
@@ -815,6 +827,8 @@ try {
   $status = "error"
   $reason = $null
   $failureCategory = $null
+  $selfAuditMissing = $false
+  $selfAuditMissingNote = $null
   $lane = if ($Review) { "read_only" } else { "implementation" }
   $terminationEvidence = if ($envelope) { @($envelope.stop_reason, $envelope.stopReason, $envelope.termination_reason, $envelope.terminationReason) -join " " } else { "" }
   if ($noFirstTurn) {
@@ -848,8 +862,29 @@ try {
     # authority; a lane may complete on those with "self-audit invalid; manager-validated".
     # Exit 0 salvage: valid transport + payload + model, invalid/missing structured audit.
     $status = "needs_gate_validation"
-    $failureCategory = "report"
-    $reason = "Structured self-audit missing or invalid; manager gate validation required."
+    $selfAuditMissing = $true
+    # Audit fix 2026-08-03: 8/13 implementation lanes in one run carried
+    # failure_category=report on top of needs_gate_validation despite exit 0, a
+    # parseable worker envelope (status done/needs_gate_validation), and a populated
+    # files_changed list — real work, misreported as a failure downstream. When the
+    # underlying worker signals success this way, drop failure_category/fail_reason
+    # entirely (they read as an error to callers checking those fields) and surface
+    # self_audit_missing + a note instead; manager gates remain the authority either way.
+    $workerStatusField = if ($null -ne $structured -and (@($structured.PSObject.Properties.Name) -contains 'status')) { [string]$structured.status } else { $null }
+    $workerFilesChangedField = if ($null -ne $structured -and (@($structured.PSObject.Properties.Name) -contains 'files_changed')) { $structured.files_changed } else { $null }
+    # ConvertFrom-Json collapses a single-item JSON array to a scalar, so a real
+    # one-file files_changed can arrive as a bare string, not [string[]] - wrap with
+    # @() rather than type-checking for an array.
+    $workerFilesChangedPresent = ($null -ne $workerFilesChangedField) -and (@(@($workerFilesChangedField) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }).Count -gt 0)
+    $workerSignalsSuccess = ($exitCode -eq 0) -and ($null -ne $structured) -and ($workerStatusField -in @("done", "needs_gate_validation")) -and $workerFilesChangedPresent
+    if ($workerSignalsSuccess) {
+      $failureCategory = $null
+      $reason = $null
+      $selfAuditMissingNote = "Underlying worker reported status '$workerStatusField' with files_changed populated (exit 0), but the structured self-audit block failed schema/manifest validation. Manager gate must independently validate this lane before acceptance; this is not a lane failure."
+    } else {
+      $failureCategory = "report"
+      $reason = "Structured self-audit missing or invalid; manager gate validation required."
+    }
   }
   else { $status = "ok" }
 
@@ -873,6 +908,7 @@ try {
     effective_effort = $effectiveEffort
     timeout_seconds = $effectiveTimeoutSeconds
     first_turn_timeout_seconds = $effectiveFirstTurnSeconds
+    heartbeat_path = $script:heartbeatPath
     bash_capable = [bool]$bashCapable
     bash_enabled = [bool]($bashCapable -and -not $Review)
     lean_system_prompt = [bool]$LeanSystemPrompt
@@ -891,6 +927,8 @@ try {
     self_audit_required = [bool]$selfAuditRequired
     self_audit_verified = [bool]$selfAuditVerified
     gate_validation_required = [bool]$gateValidationRequired
+    self_audit_missing = [bool]$selfAuditMissing
+    self_audit_missing_note = $selfAuditMissingNote
     observed_manifest_available = [bool]$observedManifestAvailable
     audit = $resultAudit
     response = $responseText

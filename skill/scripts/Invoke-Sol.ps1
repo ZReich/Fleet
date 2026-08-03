@@ -136,9 +136,9 @@ try {
   $codexArgs = @('exec', '-c', ('model="{0}"' -f $Model), '-c', ('model_reasoning_effort="{0}"' -f $Effort), '-s', $Sandbox)
   if ($SkipGitRepoCheck) { $codexArgs += '--skip-git-repo-check' }
   if ($OutputJson) { $codexArgs += @('-o', $OutputJson) }
-  # Prompt is passed on stdin-free positional; large prompts should use a prompt FILE by
-  # the caller and pass its content here. codex reads the positional prompt; stdin is EOF.
-  $codexArgs += $Prompt
+  # Pass prompt through stdin so Windows command-line length and cmd.exe metacharacter
+  # handling cannot corrupt a frozen review packet. codex exec treats '-' as stdin.
+  $codexArgs += '-'
 
   $argumentText = ConvertTo-WindowsCommandLine -ArgumentTokens $codexArgs
 
@@ -146,7 +146,7 @@ try {
   if ($launcher -match '\.cmd$') {
     # .cmd launchers require cmd.exe plus CALL so the outer process waits.
     # Fail closed on every caller-controllable value that enters the cmd line.
-    $cmdScreen = @($Prompt, $Model)
+    $cmdScreen = @($Model)
     if ($OutputJson) { $cmdScreen += $OutputJson }
     Test-CmdLauncherArgumentsSafe -Arguments $cmdScreen
     $psi.FileName = "$env:SystemRoot\System32\cmd.exe"
@@ -167,7 +167,12 @@ try {
   $proc = New-Object Diagnostics.Process
   $proc.StartInfo = $psi
   if (-not $proc.Start()) { throw 'Failed to start codex.' }
-  try { $proc.StandardInput.Close() } catch { }   # EOF on stdin == `< NUL`
+  try {
+    $promptBytes = [Text.UTF8Encoding]::new($false).GetBytes($Prompt)
+    $proc.StandardInput.BaseStream.Write($promptBytes, 0, $promptBytes.Length)
+    $proc.StandardInput.BaseStream.Flush()
+    $proc.StandardInput.Close()
+  } catch { throw "Failed to write Codex prompt to stdin: $($_.Exception.Message)" }
 
   $startedAt = Get-Date
 
@@ -187,12 +192,17 @@ try {
 
   # Kill the tree if codex produces NO output within FirstOutputSeconds (the 0-turn hang
   # class Grok's wrapper already guards) or exceeds the hard budget. Bounded either way.
+  # The two kills are DIFFERENT diagnoses and must be labeled apart: a 0-turn hang means
+  # transport/model never started; an over-budget kill means the model was mid-work and
+  # the budget was too small for the packet (r9 2026-08-03: a working 94KB review killed
+  # at 900s was mislabeled "hang", which misdirected the retry).
   $killedForHang = $false
+  $timeoutKind = $null
   while (-not $proc.HasExited) {
     Start-Sleep -Milliseconds 300
     $elapsed = ((Get-Date) - $startedAt).TotalSeconds
-    if (-not $state.First -and $elapsed -ge $FirstOutputSeconds) { $killedForHang = $true; break }
-    if ($elapsed -ge $TimeoutSeconds) { $killedForHang = $true; break }
+    if (-not $state.First -and $elapsed -ge $FirstOutputSeconds) { $killedForHang = $true; $timeoutKind = 'no_first_output'; break }
+    if ($elapsed -ge $TimeoutSeconds) { $killedForHang = $true; $timeoutKind = 'over_budget'; break }
   }
   if ($killedForHang) { Stop-Tree $proc } else { try { $null = $proc.WaitForExit(5000) } catch { } }
   Start-Sleep -Milliseconds 150   # let final event callbacks flush
@@ -219,13 +229,18 @@ try {
 
   $status = 'ok'
   $reason = $null
-  if ($killedForHang) { $status = 'timeout'; $reason = "No completion within $TimeoutSeconds s; process tree killed (0-turn/hang guard)." }
+  if ($killedForHang) {
+    $status = 'timeout'
+    if ($timeoutKind -eq 'no_first_output') { $reason = "No first output within $FirstOutputSeconds s; process tree killed (0-turn/hang guard)." }
+    else { $reason = "Over budget: no completion within $TimeoutSeconds s while producing output; model was mid-work - size the budget to the packet (Get-FleetReviewBudget codex_timeout_seconds), do not treat as a hang." }
+  }
   elseif ($exitCode -ne 0) { $status = 'error'; $reason = "codex exited with code $exitCode." }
   elseif ($Probe -and -not $probeOk) { $status = 'error'; $reason = 'Probe did not return SOL_OK; gpt-5.6-sol may be unresolved/renamed.' }
   elseif ([string]::IsNullOrWhiteSpace($response)) { $status = 'error'; $reason = 'Sol returned empty output.' }
 
   $result = [ordered]@{
     status           = $status
+    timeout_kind     = $timeoutKind
     model_requested  = $Model
     effort           = $Effort
     sandbox          = $Sandbox

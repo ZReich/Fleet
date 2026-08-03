@@ -36,9 +36,10 @@ function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) 
       else { '"' + ($token -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' }
     }) -join " "
   }
-  function Run-Wrapper([string]$Scenario, [int]$Timeout = 10, [switch]$Auto, [switch]$Review, [switch]$ReadOnly, [string]$Mode = "json", [int]$MinimumAuditPasses = 1, [int]$MaxTurns = 0, [switch]$Lean, [switch]$Memory, [switch]$Subagents, [string]$Resume = "", [string]$Effort = "high", [int]$FirstTurnTimeout = -1) {
+  function Run-Wrapper([string]$Scenario, [int]$Timeout = 10, [switch]$Auto, [switch]$Review, [switch]$ReadOnly, [string]$Mode = "json", [int]$MinimumAuditPasses = 1, [int]$MaxTurns = 0, [switch]$Lean, [switch]$Memory, [switch]$Subagents, [string]$Resume = "", [string]$Effort = "high", [int]$FirstTurnTimeout = -1, [int]$HeartbeatSeconds = -1) {
   $env:FLEET_GROK_FAKE_SCENARIO = $Scenario
   $args = @("-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", $wrapper, "-Prompt", "offline contract", "-WorkingDirectory", $wrapperWorktree, "-Mode", $Mode, "-TimeoutSeconds", [string]$Timeout, "-MinimumAuditPasses", [string]$MinimumAuditPasses)
+  if ($HeartbeatSeconds -ge 1) { $args += @("-HeartbeatSeconds", [string]$HeartbeatSeconds) }
   if ($Auto) { $args += @("-BashCapability", "Auto", "-IsolatedWorktree") }
     if ($Review) { $args += "-Review" }
     if ($ReadOnly) { $args += "-ReadOnly" }
@@ -103,6 +104,7 @@ try {
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Args)
 if ($Args -contains "--version") { Write-Output "grok 9.9.9 (fake) [stable]"; exit 0 }
 $scenario = $env:FLEET_GROK_FAKE_SCENARIO
+if ($scenario -eq "heartbeat-slow") { Start-Sleep -Seconds 3 }
 if ($scenario -eq "timeout") {
   $child = Start-Process ping.exe -ArgumentList "-n","60","127.0.0.1" -WindowStyle Hidden -PassThru
   [IO.File]::WriteAllText($env:FLEET_GROK_CHILD_PID_FILE, [string]$child.Id)
@@ -286,6 +288,28 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     Assert-True ($json.status -eq "ok") "expected status ok, not fallback: $($run.Raw)"
     Assert-True ($json.status -ne "error") "fallback must not fire on success path: $($run.Raw)"
   }
+  Case "heartbeat writes to sidecar file, never pollutes stdout/stderr" {
+    # Audit fix 2026-08-03: heartbeats used to go to [Console]::Error, and a caller
+    # merging 2>&1 got a NativeCommandError-wrapped heartbeat line ahead of the real
+    # result JSON. Heartbeats must now land only in the sidecar file.
+    $run = Run-Wrapper "heartbeat-slow" 15 -HeartbeatSeconds 1
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "ok") "expected heartbeat-slow success: $($run.Raw)"
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$json.heartbeat_path)) "expected heartbeat_path in result: $($run.Raw)"
+    Assert-True (Test-Path -LiteralPath $json.heartbeat_path) "expected heartbeat sidecar file to exist: $($json.heartbeat_path)"
+    $hbLines = @(Get-Content -LiteralPath $json.heartbeat_path | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    Assert-True ($hbLines.Count -ge 1) "expected at least one heartbeat line in sidecar"
+    foreach ($line in $hbLines) {
+      $hb = $line | ConvertFrom-Json
+      Assert-True ($hb.type -eq "heartbeat" -and $hb.lane -eq "grok-4.5" -and $null -ne $hb.elapsed_seconds) "malformed heartbeat line: $line"
+    }
+    Assert-True ($run.Stderr -notmatch '"type"\s*:\s*"heartbeat"') "heartbeat leaked onto stderr"
+    Assert-True ($run.Raw -notmatch '"type"\s*:\s*"heartbeat"') "heartbeat leaked onto stdout"
+    # The exact failure mode this fixes: line 1 of stdout must parse clean on its own.
+    $firstLine = ($run.Raw -split "`r?`n")[0]
+    $null = $firstLine | ConvertFrom-Json
+    Remove-Item -LiteralPath $json.heartbeat_path -Force -ErrorAction SilentlyContinue
+  }
   Case "early wrapper failure emits error result on stdout" {
     $old = $ErrorActionPreference
     try {
@@ -346,6 +370,31 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
   Case "below minimum audit passes becomes needs_gate_validation" { $run = Run-Wrapper "below-passes" 10 -MinimumAuditPasses 2; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "needs_gate_validation") "expected salvage" }
   Case "empty criteria becomes needs_gate_validation" { $run = Run-Wrapper "empty-criteria"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "needs_gate_validation") "expected salvage" }
   Case "failed criterion becomes needs_gate_validation" { $run = Run-Wrapper "failed-criterion"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "needs_gate_validation") "expected salvage" }
+  Case "worker-success self-audit mismatch clears failure_category, sets self_audit_missing" {
+    # Audit fix 2026-08-03: exit 0 + parseable worker JSON (status done, files_changed
+    # populated) but the audit manifest check fails (claimed file != observed delta).
+    # Must land as needs_gate_validation with NO failure_category/fail_reason (real work,
+    # not an error) plus self_audit_missing=true and an explanatory note.
+    $run = Run-Wrapper "audit-mismatch"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "needs_gate_validation") "expected salvage status: $($run.Raw)"
+    Assert-True ($json.self_audit_missing -eq $true) "expected self_audit_missing true: $($run.Raw)"
+    Assert-True ($null -eq $json.failure_category) "expected failure_category cleared on worker-success salvage: $($run.Raw)"
+    Assert-True ($null -eq $json.fail_reason) "expected fail_reason cleared on worker-success salvage: $($run.Raw)"
+    Assert-True (-not [string]::IsNullOrWhiteSpace([string]$json.self_audit_missing_note) -and $json.self_audit_missing_note -match "manager gate") "expected explanatory note: $($run.Raw)"
+  }
+  Case "missing worker JSON keeps failure_category=report (genuine failure, not salvaged)" {
+    # No worker JSON at all is NOT the false-failure shape the fix targets; keep the
+    # existing error-shaped failure_category/fail_reason unchanged.
+    $run = Run-Wrapper "missing-audit"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($json.status -eq "needs_gate_validation" -and $json.failure_category -eq "report" -and $json.self_audit_missing -eq $true) "expected genuine no-worker-json path unchanged: $($run.Raw)"
+  }
+  Case "clean success reports self_audit_missing false with no note" {
+    $run = Run-Wrapper "success"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($json.self_audit_missing -eq $false -and $null -eq $json.self_audit_missing_note) "expected self_audit_missing false on clean success: $($run.Raw)"
+  }
   Case "changed file absent from files_reviewed is accepted when observed matches" {
     $run = Run-Wrapper "unreviewed"
     $json = $run.Raw | ConvertFrom-Json

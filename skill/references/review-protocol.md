@@ -269,6 +269,30 @@ Gating:
 - unresolved `WATCH` -> comment with exact follow-up
 - otherwise Sol may approve after the tier's required verdict
 
+### Re-review round cap (separate counter from arbitration)
+
+Not the same counter as the Sol arbitration cap above (D5, three rounds WITHIN one
+wave's verdict cycle). This caps whole re-review rounds across a run — dispatch a
+fresh panel, gate it, repeat.
+
+- Maximum three re-review rounds per run. A fourth does not exist: freeze the diff,
+  packet, and verdicts; report unresolved blockers to the user; escalate. Continuing
+  requires a new run-id and a new locked plan, not a fourth round.
+- Each round reviews the packet FROZEN at round start, never a moving target.
+  Repairs between rounds are limited to the verified findings from the prior round —
+  no opportunistic cleanup or new behavior. If the shipped diff has grown more than
+  10% in bytes since the frozen packet, the round's review target no longer exists:
+  abort the round and re-freeze a new packet under a new round (still counted toward
+  the cap).
+- Before consuming any round's lane outputs, run
+  `scripts/Assert-FleetLaneCompletion.ps1 -LaneDir <round dir>`. A 0-byte or missing
+  lane output is a dead lane, not a completed round — it does not count as a voice
+  and must not be silently folded into the verdict.
+- A voice that times out or comes back dead is substituted instantly with a labeled
+  cross-family voice (`voice_substituted`) so the round completes on schedule — never
+  hold the round open waiting on a dead voice, and never let a dead lane's absence
+  pass unnoticed.
+
 ## Retention (FULL panel)
 
 `scripts/Get-FleetReviewBudget.ps1` is the executable authority for Opus/GLM budgets;

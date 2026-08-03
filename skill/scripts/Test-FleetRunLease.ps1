@@ -157,6 +157,63 @@ try {
     Remove-Item -LiteralPath $livePath -Force
   }
 
+  Case 'owner_pid defaults to a numeric pid, not null' {
+    # Audit fix 2026-08-03: every lease on disk had owner_pid:null because no caller
+    # ever passed -OwnerPid. Enter now defaults it to the parent (caller) process.
+    $path = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'owner-pid-test'
+    $lease = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    $ownerPidVal = 0
+    Assert-True ([int]::TryParse([string]$lease.owner_pid, [ref]$ownerPidVal) -and $ownerPidVal -gt 0) ('expected numeric owner_pid, got: ' + ($lease | ConvertTo-Json -Compress))
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'owner-pid-test'
+  }
+
+  Case 'a live lease with the same RunId still throws (no silent reclaim)' {
+    $path = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'live-same-id'
+    Assert-True (Test-Path -LiteralPath $path) 'first enter for live-same-id did not create a lease'
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $err2 = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'live-same-id' 2>&1 | Out-String)
+      $exit2 = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPreference }
+    Assert-True ($exit2 -ne 0 -and $err2 -match 'already exists') ('live lease with same RunId was not refused: ' + $err2)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'live-same-id'
+  }
+
+  Case 'expired-lease reclaim logs on stderr only; stdout stays a clean single lease path' {
+    # Fix 2026-08-03: the reclaim log line must never land in stdout - callers capture
+    # this script's stdout as the single lease-path return value.
+    $leaseRoot = Join-Path $temp '.codex\fleet\run-leases'; New-Item -ItemType Directory -Force -Path $leaseRoot | Out-Null
+    [IO.File]::WriteAllText((Join-Path $leaseRoot 'reclaim-log-test.json'), (@{schema_version='1';run_id='reclaim-log-test';started_at=[datetimeoffset]::Now.AddHours(-2).ToString('o');expires_at=[datetimeoffset]::Now.AddHours(-1).ToString('o')} | ConvertTo-Json))
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = 'powershell.exe'
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $enter + '" -RunId reclaim-log-fresh'
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $proc = [Diagnostics.Process]::Start($psi)
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    $proc.WaitForExit()
+    $stdoutLines = @($stdout -split "`r?`n" | Where-Object { $_ })
+    Assert-True ($stdoutLines.Count -eq 1 -and (Test-Path -LiteralPath $stdoutLines[0])) ('expected exactly one stdout line (the lease path): ' + $stdout)
+    Assert-True ($stderr -match 'reclaimed expired lease reclaim-log-test') ('expected reclaim log line on stderr: ' + $stderr)
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'reclaim-log-fresh'
+  }
+
+  Case 'Renew-FleetRunLease refuses a missing lease with a clear error' {
+    $oldPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $err3 = (& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $renew -RunId 'renew-never-existed' 2>&1 | Out-String)
+      $exit3 = $LASTEXITCODE
+    }
+    finally { $ErrorActionPreference = $oldPreference }
+    Assert-True ($exit3 -ne 0 -and $err3 -match 'not found') ('renew of a missing lease was not refused: ' + $err3)
+  }
+
   Case '-ReclaimStale prunes a dead lease without starting a run' {
     $leaseRoot = Join-Path $temp '.codex\fleet\run-leases'; New-Item -ItemType Directory -Force -Path $leaseRoot | Out-Null
     [IO.File]::WriteAllText((Join-Path $leaseRoot 'orphan.json'), (@{schema_version='1';run_id='orphan';owner_pid=999990;started_at=[datetimeoffset]::Now.ToString('o');heartbeat_at=[datetimeoffset]::Now.ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')} | ConvertTo-Json))

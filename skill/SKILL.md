@@ -69,6 +69,8 @@ an independent voice; it is the exact claim the review exists to check.
   only". Everything above MICRO needs real voices — see the Lane Utilization Contract.
 - Tests / build the repo defines → quote the count WITH a denominator (`tests: 274/274`);
   a zero or missing denominator did not run.
+- Append at least one LESSONS.md line whenever the run had any retry, timeout, or
+  substituted voice — a run with retries and no LESSONS entry is an unfinished report.
 
 The adversarial review is a STANDING step after every coding/fix/config wave — not
 something the user has to ask for, and not optional because tests are green. Runs that
@@ -102,6 +104,24 @@ same-wave lanes. A dependency edge is a cost that must be justified — task B d
 task A ONLY when B genuinely consumes A's output or writes the same files. "Feels safer
 to serialize" is not a dependency. See Phase 2 for the wave-graph fields and the
 anti-serialization validation gate.
+
+### Review rounds are bounded and reviews review a frozen diff
+
+- Max 3 re-review rounds per run. Round 4 does not exist: stop, report unresolved
+  blockers to the user, escalate. A new run (new run-id, new plan) is the only way
+  to continue.
+- The diff is FROZEN during review. Repairs are limited to verified findings — no
+  new features or refactors mid-review. Shipped-diff growth >10% (bytes) since the
+  frozen packet means the review target no longer exists: abort the rounds, start
+  a new run.
+- A review round only COUNTS if every expected lane produced a non-empty verdict
+  or is explicitly recorded `voice_substituted`. Run
+  `scripts/Assert-FleetLaneCompletion.ps1 -LaneDir <round dir>` before consuming a
+  round; a 0-byte or missing lane output is a dead lane — substitute immediately
+  with a labeled voice (record `voice_substituted`), never a silent ad-hoc file.
+- Sol is plan + final verdict by default. If Sol (or any voice) times out as a
+  review voice, substitute instantly (Terra or GLM, labeled `voice_substituted`)
+  and let the round complete — never hold a round waiting on a dead voice.
 
 ## Modes / Tiers
 
@@ -953,6 +973,14 @@ Review/read-only prompts must request free-form Markdown and must not demand the
   acceptance) must pin temperature per-request and require 2-of-2 (or best-of-N
   majority) agreement before emitting GO or NO-GO. A single sampled model verdict is a
   flaky gate; run every model-based acceptance doc at least twice before scoring.
+- Every wrapper invocation quotes every path argument. The user profile path
+  contains a space; an unquoted `-File` argument truncates at the space and
+  dispatches a nonexistent half-path, killing the lane instantly (three lanes
+  died this way 2026-08-03).
+- Native Codex subagent spawns MUST pin an explicit fleet model (spawn parameter),
+  never inherit the app default. Default-model fan-out burned 44.6% of
+  2026-08-03 tokens on gpt-5.5, a model outside this routing table. A spawn
+  without an explicit model is a dispatch defect.
 
 ## Liveness
 

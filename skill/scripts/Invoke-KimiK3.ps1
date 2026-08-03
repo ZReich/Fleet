@@ -1,8 +1,12 @@
 # Canonical Fleet Kimi K3 artifact-analysis transport.
 # Kimi prompt mode auto-approves regular tools, so this wrapper never exposes a
-# repository: it runs from a disposable home/workspace with static deny rules and
-# embeds frozen text artifacts directly in the prompt. Images are copied into that
-# workspace and ReadMediaFile is the only optionally permitted tool.
+# repository: it runs from a disposable home/workspace with static deny rules.
+# The full task (lane rules, request, and frozen text artifacts) is written to one
+# frozen file under the runtime root and delivered via a Read call scoped to that
+# exact path (kimi 0.31.1 has no --prompt-file/stdin flag for -p; this keeps the
+# CLI argv short and fixed-size regardless of artifact/request size). Images are
+# copied into the runtime and ReadMediaFile is the only other optionally permitted
+# read tool.
 param(
   [string]$Prompt,
   [string]$PromptFile,
@@ -65,9 +69,10 @@ $startedAt = $null
 $credentialCleanupVerified = $null
 $promptBytes = $null
 $ownerMarkerStatus = $null
-# Windows CreateProcess command-line ceiling is 32767; fail early below that so
-# oversized artifact packs never surface as a cryptic Win32 "filename too long".
-$script:MaxKimiCommandLineChars = 30000
+# Windows CreateProcess command-line ceiling is 32767. The prompt itself now rides a
+# file (see prompt-file transport below), so this only guards a pathological runtime
+# path length, not artifact size - raised close to the real ceiling with headroom.
+$script:MaxKimiCommandLineChars = 32000
 $script:KimiRuntimeCleanupDiagnostic = 'not-run'
 
 # Per-root owner marker for Clear-StaleKimiK3Runtime: { pid, start_time 'o' }.
@@ -373,13 +378,28 @@ function New-GuardedRuntimeConfig {
     [string]$WorkspaceDirectory,
     [bool]$DesignWorkspace,
     [string]$SandboxDirectory,
-    [bool]$RepoSandbox
+    [bool]$RepoSandbox,
+    [string]$PromptFilePath
   )
   $source = [IO.File]::ReadAllText($SourceConfig)
   if ($source -match '(?m)^\s*\[\[\s*(permission\.rules|hooks)\s*\]\]' -or $source -match '(?m)^\s*\[\s*permission\s*\]') {
     throw "Kimi source config has user permission rules or hooks; Fleet refuses to compose an ambiguous prompt-mode policy."
   }
   $rules = New-Object Collections.Generic.List[string]
+  # Prompt-file transport (audit fix 2026-08-03): kimi 0.31.1 has no --prompt-file or
+  # stdin flag for -p, so a large task (artifact packs) previously rode argv straight
+  # into the Windows command-line ceiling. The full task spec is now written to one
+  # frozen file under the runtime root and Read is scoped to exactly that path; -p
+  # itself only carries a short static instruction to read it. Unconditional across
+  # every lane (artifact-only/research/design/repo-sandbox all use it).
+  if ($PromptFilePath) {
+    $rules.Add('[[permission.rules]]')
+    $rules.Add('decision = "allow"')
+    $rules.Add(('pattern = "Read({0})"' -f ($PromptFilePath -replace '\\', '/')))
+    $rules.Add('scope = "session-runtime"')
+    $rules.Add('reason = "Fleet prompt-file transport; full task spec delivered by file, not argv"')
+    $rules.Add('')
+  }
   if ($AllowImageRead) {
     $imagePattern = (($ImagesDirectory -replace '\\', '/') + '/*')
     $rules.Add('[[permission.rules]]')
@@ -456,6 +476,7 @@ function New-KimiPrompt {
     [string]$SandboxSha
   )
   $parts = New-Object Collections.Generic.List[string]
+  $parts.Add('NOTE: this file was loaded via the one Read call already permitted for transport (loading this brief). Do not call Read again on this or any other path unless a lane rule below explicitly scopes it.')
   # Static lane preamble only before REQUEST (cache-contract: no temp paths/GUIDs
   # in the stable prefix). Dynamic workspace/sandbox paths land AFTER REQUEST.
   if ($DesignWorkspace) {
@@ -471,7 +492,7 @@ function New-KimiPrompt {
     $parts.Add('FLEET KIMI K3 RESEARCH-SWARM LANE.')
     # Self-arm against host-file reaches: briefs often name local docs; the model
     # must not attempt Read/filesystem tools (wrapper fail-closed would discard work).
-    $parts.Add('TOOLING CONSTRAINT: no file tools exist in this environment. Do not call Read, ReadMediaFile, or any filesystem tool. Use WebSearch and FetchURL only. Any document mentioned in this brief is either quoted inline or out of scope.')
+    $parts.Add('TOOLING CONSTRAINT: no file tools are available beyond the Read call already used to load this brief. Do not call Read again, ReadMediaFile, or any other filesystem tool. Use WebSearch and FetchURL only. Any document mentioned in this brief is either quoted inline or out of scope.')
     $parts.Add('You are a research and red-team candidate. Answer the request using the frozen brief below plus open-web research.')
     $webRules = 'You may fan out a sub-agent swarm (AgentSwarm/Agent) and use WebSearch/FetchURL for read-only research. Do not read this repository, run shell, write or edit files, or use any other tool. Any other tool attempt is a failed run. Every external claim must cite its source and state uncertainty; do not assert repository, filesystem, or host facts not present in the supplied evidence. Cite ONLY URLs you yourself fetched THIS run via FetchURL with a successful response; a URL a sub-agent fetched does not count until you re-fetch it. Before finalizing, emit a CITATIONS: block listing every cited URL; delete any claim whose URL you cannot list there or rewrite it as "no verifiable source." Cited URLs you did not fetch will fail the run.'
     if ($Images.Count) { $webRules += ' You may also call ReadMediaFile for the copied visual-evidence paths below.' }
@@ -481,10 +502,10 @@ function New-KimiPrompt {
     $parts.Add('FLEET KIMI K3 ARTIFACT-ONLY LANE.')
     $parts.Add('You are a planning, design-critique, or red-team candidate. Analyze only this request and the frozen evidence below.')
     if ($Images.Count) {
-      $parts.Add('Do not call any tool except ReadMediaFile for the copied visual-evidence paths below. Any other tool attempt is a failed run. Do not claim repository, web, filesystem, or external facts not contained in the supplied evidence.')
+      $parts.Add('Do not call any tool other than the Read call already used to load this file, and ReadMediaFile for the copied visual-evidence paths below. Any other tool attempt is a failed run. Do not claim repository, web, filesystem, or external facts not contained in the supplied evidence.')
     }
     else {
-      $parts.Add('Do not call tools. Any tool attempt is a failed run. Do not claim repository, web, filesystem, or external facts not contained in the supplied evidence.')
+      $parts.Add('Do not call any tool other than the Read call already used to load this file. Any other tool attempt is a failed run. Do not claim repository, web, filesystem, or external facts not contained in the supplied evidence.')
     }
   }
   $parts.Add('Do not make final architecture, API, security, product, or shipping decisions. State uncertainty and evidence gaps explicitly.')
@@ -660,8 +681,12 @@ try {
     $sandboxPathRecorded = [IO.Path]::GetFullPath($sandboxDirectory)
   }
 
+  # Prompt-file transport path: known before content is written so the permission
+  # rule can be composed ahead of the actual New-KimiPrompt call below.
+  $promptFilePath = Join-Path $runtimeRoot 'prompt.txt'
+
   $runtimeConfig = Join-Path $runtimeHome 'config.toml'
-  New-GuardedRuntimeConfig -SourceConfig $sourceConfig -DestinationConfig $runtimeConfig -ImagesDirectory $imagesDirectory -AllowImageRead ([bool]$ImageFile.Count) -ResearchSwarm ([bool]$ResearchSwarm) -WorkspaceDirectory $workspaceDirectory -DesignWorkspace ([bool]$DesignWorkspace) -SandboxDirectory $sandboxDirectory -RepoSandbox ([bool]$repoSandboxActive)
+  New-GuardedRuntimeConfig -SourceConfig $sourceConfig -DestinationConfig $runtimeConfig -ImagesDirectory $imagesDirectory -AllowImageRead ([bool]$ImageFile.Count) -ResearchSwarm ([bool]$ResearchSwarm) -WorkspaceDirectory $workspaceDirectory -DesignWorkspace ([bool]$DesignWorkspace) -SandboxDirectory $sandboxDirectory -RepoSandbox ([bool]$repoSandboxActive) -PromptFilePath $promptFilePath
   $effectiveConfigSha256 = Get-Sha256 -Path $runtimeConfig
   $sourceConfigSha256 = Get-Sha256 -Path $sourceConfig
   # OAuth is file-backed in Kimi Code. Copy it only into this disposable home;
@@ -688,18 +713,31 @@ try {
   $effectivePrompt = New-KimiPrompt -Request $Prompt -Artifacts $ArtifactFile -Images $copiedImages -MaxBytes $MaxArtifactBytes -ResearchSwarm ([bool]$ResearchSwarm) -DesignWorkspace ([bool]$DesignWorkspace) -WorkspaceDirectory $workspaceDirectory -RepoSandbox ([bool]$repoSandboxActive) -SandboxDirectory $sandboxDirectory -SandboxSha ([string]$sandboxSha)
   $effectivePrompt += "`n" + $fleetTerseOutputTrailer
   $promptBytes = $effectivePrompt.Length
-  # Keep parser options before the multiline prompt. This avoids Windows command
-  # shim edge cases while preserving the native Kimi CLI argument contract.
-  # Kimi Code 0.27.0 has no --prompt-file / stdin prompt transport (LESSONS
-  # 2026-07-18); the effective prompt rides argv and must stay under CreateProcess limits.
-  $arguments = @('--model', $ExpectedModel, '--skills-dir', $skillsDirectory, '--output-format', 'stream-json', '--prompt', $effectivePrompt)
+  # Prompt-file transport (audit fix 2026-08-03): kimi 0.31.1's -p flag has no
+  # --prompt-file/stdin alternative (verified against the installed CLI's own
+  # --help; LESSONS 2026-07-18/2026-07-20 record the same gap on 0.27.0), and a
+  # large task previously rode argv straight into the Windows ~32767-char
+  # CreateProcess ceiling ("prompt_exceeds_command_line" at prompt_bytes 47368).
+  # The full task spec now goes to $promptFilePath (scoped Read allow rule added
+  # above); -p carries only this short static instruction, so argv length no
+  # longer scales with artifact/request size.
+  [IO.File]::WriteAllText($promptFilePath, $effectivePrompt, (New-Object Text.UTF8Encoding($false)))
+  $normalizedPromptFilePath = $promptFilePath -replace '\\', '/'
+  $staticPrompt = "FLEET KIMI K3 FILE-PROMPT TRANSPORT. PROMPT_FILE: $normalizedPromptFilePath`nUse your Read tool to read PROMPT_FILE (that exact path) exactly once now. Its content is your complete task: lane rules, the request, and any frozen artifacts. Follow every instruction in it precisely and respond exactly as it specifies. Do not read any other path with the Read tool. If the Read call on that exact path is denied or fails, report that failure verbatim instead of guessing content."
+  # Keep parser options before the (now short, fixed-size) prompt arg. This avoids
+  # Windows command shim edge cases while preserving the native Kimi CLI arg contract.
+  $arguments = @('--model', $ExpectedModel, '--skills-dir', $skillsDirectory, '--output-format', 'stream-json', '--prompt', $staticPrompt)
   if (@($arguments | Where-Object { $_ -in @('--yolo', '--auto', '--plan', '-y') }).Count) { throw 'Unsafe Kimi flag construction blocked.' }
 
   $psi = New-Object Diagnostics.ProcessStartInfo
   $psi.FileName = $executable
   $psi.Arguments = Quote-Arguments -Tokens $arguments
+  # Sanity net only: with the static instruction above, argv should stay a few
+  # hundred chars regardless of artifact size. A raised cap (was 30000, a value
+  # that used to trip on realistic artifact packs) still catches a genuinely
+  # pathological runtime path length rather than a normal-sized task.
   if ($psi.Arguments.Length -gt $script:MaxKimiCommandLineChars) {
-    throw 'prompt_exceeds_command_line; use fewer/smaller artifacts or split the pack'
+    throw 'prompt_exceeds_command_line; unexpected after file-based prompt transport - check for an oversized runtime/skills-dir path'
   }
   $psi.WorkingDirectory = $runtimeRoot
   $psi.UseShellExecute = $false
@@ -822,11 +860,20 @@ try {
     }
   }
 
+  $promptFilePathFull = [IO.Path]::GetFullPath($promptFilePath)
   $unsafeToolCall = $false
   $toolEvidence = @()
   foreach ($call in $toolCalls) {
-    $inCopiedImageWorkspace = $false
+    $inPromptFile = $false
     $candidate = [string]$call.path
+    if (-not [string]::IsNullOrWhiteSpace($candidate)) {
+      try {
+        $candidatePathForPrompt = if ([IO.Path]::IsPathRooted($candidate)) { [IO.Path]::GetFullPath($candidate) } else { [IO.Path]::GetFullPath((Join-Path $runtimeRoot $candidate)) }
+        $inPromptFile = $candidatePathForPrompt.Equals($promptFilePathFull, [StringComparison]::OrdinalIgnoreCase)
+      }
+      catch { }
+    }
+    $inCopiedImageWorkspace = $false
     if (-not [string]::IsNullOrWhiteSpace($candidate)) {
       try {
         $candidatePath = if ([IO.Path]::IsPathRooted($candidate)) { [IO.Path]::GetFullPath($candidate) } else { [IO.Path]::GetFullPath((Join-Path $runtimeRoot $candidate)) }
@@ -852,9 +899,10 @@ try {
       }
       catch { }
     }
-    $toolEvidence += [pscustomobject]@{ name = [string]$call.name; copied_image_path = [bool]$inCopiedImageWorkspace; in_workspace = [bool]$inWorkspace; in_sandbox = [bool]$inSandbox }
+    $toolEvidence += [pscustomobject]@{ name = [string]$call.name; copied_image_path = [bool]$inCopiedImageWorkspace; in_workspace = [bool]$inWorkspace; in_sandbox = [bool]$inSandbox; in_prompt_file = [bool]$inPromptFile }
     $callAllowed = $false
-    if ([string]$call.name -eq 'ReadMediaFile' -and $inCopiedImageWorkspace) { $callAllowed = $true }
+    if ([string]$call.name -eq 'Read' -and $inPromptFile) { $callAllowed = $true }
+    elseif ([string]$call.name -eq 'ReadMediaFile' -and $inCopiedImageWorkspace) { $callAllowed = $true }
     elseif ($ResearchSwarm -and ($script:ResearchSwarmAllowTools -contains [string]$call.name)) { $callAllowed = $true }
     elseif ($DesignWorkspace -and ($script:DesignWorkspaceScopedTools -contains [string]$call.name) -and $inWorkspace) { $callAllowed = $true }
     elseif ($repoSandboxActive -and ($script:RepoSandboxScopedTools -contains [string]$call.name) -and $inSandbox) { $callAllowed = $true }
@@ -878,6 +926,7 @@ try {
   elseif ($exitCode -ne 0) { $reason = "Kimi Code exited with code $exitCode." }
   elseif (-not $events.Count) { $reason = 'Kimi returned no stream-json events.' }
   elseif ($unsafeToolCall) { $reason = 'Kimi attempted a disallowed or non-isolated tool call.' }
+  elseif (-not (@($toolEvidence | Where-Object { $_.name -eq 'Read' -and $_.in_prompt_file }).Count)) { $reason = 'Kimi did not read the prompt file.' }
   elseif ($ImageFile.Count -and -not (@($toolCalls | Where-Object { $_.name -eq 'ReadMediaFile' }).Count)) { $reason = 'Kimi did not read the copied visual evidence.' }
   elseif ([string]::IsNullOrWhiteSpace($response)) { $reason = 'Kimi returned no assistant text.' }
   elseif ($RequireJsonResponse -and -not $responseJsonValid) { $reason = 'Kimi response was not valid JSON.' }
@@ -935,6 +984,7 @@ try {
     artifact_count = $ArtifactFile.Count
     image_count = $ImageFile.Count
     prompt_bytes = $promptBytes
+    prompt_transport = 'file'
     tool_call_count = $toolCalls.Count
     tool_evidence = $toolEvidence
     response_json_valid = $responseJsonValid

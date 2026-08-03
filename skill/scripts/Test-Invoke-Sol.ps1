@@ -194,20 +194,23 @@ class FakeCodex {
     )
     $np = Start-Process -FilePath 'powershell.exe' -ArgumentList $nativeArgs `
       -NoNewWindow -Wait -PassThru -RedirectStandardOutput $nativeOut -RedirectStandardError $nativeErr
-    # Prompt arg includes a newline+trailer; record file is newline-joined argv,
-    # so assert on raw text rather than per-line equality.
+    # Stdin transport (2026-08-03): the prompt travels via stdin ('-' positional), so
+    # argv must contain the '-' marker and exec but NEVER the prompt text itself —
+    # keeping frozen packets off the Windows command line entirely.
     $argvRaw = if (Test-Path -LiteralPath $argvFile) { Get-Content -Raw -LiteralPath $argvFile } else { '' }
-    Check 'native launcher preserves backslash-quote prompt' (
-      $np.ExitCode -eq 0 -and
-      $argvRaw.Contains('C:\path\"quoted"') -and
-      ($argvRaw -match '(?m)^exec$')
+    Check 'native launcher passes prompt via stdin, not argv' (
+      ($argvRaw -match '(?m)^-$') -and
+      ($argvRaw -match '(?m)^exec$') -and
+      (-not $argvRaw.Contains('C:\path\"quoted"'))
     )
     Remove-Item Env:FAKE_CODEX_ARGV_FILE -ErrorAction SilentlyContinue
   }
 
-  # --- cmd launcher: quote+ampersand fail-closed ---
+  # --- cmd launcher: metachar prompt is SAFE under stdin transport (2026-08-03) ---
+  # The prompt no longer touches the cmd.exe line, so quotes/ampersands in it must NOT
+  # trip the unsafe-argument guard; the guard still screens Model/OutputJson (below).
   $fakeCmd = Join-Path $temp 'codex-unsafe.cmd'
-  [IO.File]::WriteAllText($fakeCmd, '@echo should-not-run')
+  [IO.File]::WriteAllText($fakeCmd, '@echo cmd-ran-ok')
   $env:FLEET_CODEX_LAUNCHER = $fakeCmd
   $unsafePrompt = 'has "quote" and & ampersand'
   $errFile = Join-Path $temp 'cmd-unsafe.err'
@@ -223,9 +226,9 @@ class FakeCodex {
   $errText = if (Test-Path $errFile) { Get-Content -Raw -LiteralPath $errFile } else { '' }
   $outText = if (Test-Path $outFile) { Get-Content -Raw -LiteralPath $outFile } else { '' }
   $combined = $errText + $outText
-  Check 'cmd launcher refuses quote-ampersand prompt' (
-    $p.ExitCode -ne 0 -and
-    $combined -match 'cmd launcher refuses unsafe'
+  Check 'cmd launcher accepts metachar prompt via stdin' (
+    ($combined -notmatch 'cmd launcher refuses unsafe') -and
+    ($combined -match 'cmd-ran-ok')
   )
 
   # --- cmd launcher: unsafe OutputJson fail-closed ---

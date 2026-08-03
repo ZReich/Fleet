@@ -48,7 +48,24 @@ if ($env:FAKE_KIMI_EXPECT_RESEARCH -eq '1') {
   if (-not $configText.Contains('pattern = "Bash"') -or -not $configText.Contains('pattern = "Write"')) { [Console]::Error.WriteLine('RESEARCH_DROPPED_CORE_DENY'); exit 30 }
 } elseif ($allowWeb -or $allowSwarm) { [Console]::Error.WriteLine('LEAKED_RESEARCH_ALLOW'); exit 29 }
 $prompt = $Args[[Array]::IndexOf($Args, '--prompt') + 1]
-if ($env:FAKE_KIMI_EXPECT -and -not $prompt.Contains($env:FAKE_KIMI_EXPECT)) { exit 25 }
+# Prompt-file transport: -p now carries only a short static instruction naming the
+# file that holds the real task. Argv must stay tiny regardless of artifact size.
+if ($prompt.Length -gt 4000) { [Console]::Error.WriteLine('PROMPT_ARGV_TOO_LARGE:' + $prompt.Length); exit 38 }
+$promptFileMatch = [regex]::Match($prompt, '(?m)PROMPT_FILE:\s*(.+)$')
+if (-not $promptFileMatch.Success) { [Console]::Error.WriteLine('NO_PROMPT_FILE_MARKER'); exit 39 }
+$promptFilePath = $promptFileMatch.Groups[1].Value.Trim() -replace '/', '\'
+if (-not (Test-Path -LiteralPath $promptFilePath -PathType Leaf)) { [Console]::Error.WriteLine('PROMPT_FILE_MISSING:' + $promptFilePath); exit 40 }
+if (-not $configText.Contains('pattern = "Read(')) { [Console]::Error.WriteLine('NO_PROMPT_READ_ALLOW'); exit 41 }
+$promptFileContent = [string](Get-Content -Raw -LiteralPath $promptFilePath -Encoding UTF8)
+if ($env:FAKE_KIMI_EXPECT -and (-not $promptFileContent -or -not $promptFileContent.Contains($env:FAKE_KIMI_EXPECT))) { exit 25 }
+# Every real kimi run reads the prompt file once (per the static -p instruction)
+# before doing anything else; simulate that here so the wrapper's mandatory
+# "Kimi did not read the prompt file" check sees it, unless a test explicitly
+# wants to exercise that negative path.
+if ($env:FAKE_KIMI_SKIP_PROMPT_READ -ne '1') {
+  [ordered]@{ role='assistant'; tool_calls=@([ordered]@{ name='Read'; arguments=[ordered]@{ path=$promptFilePath } }) } | ConvertTo-Json -Compress -Depth 5
+  [ordered]@{ role='tool'; name='Read'; content=$promptFileContent } | ConvertTo-Json -Compress
+}
 # Owner-marker probe: capture the wrapper-written owner.json from the runtime root
 # (parent of KIMI_CODE_HOME). Never invent a marker here — only copy what exists.
 if ($env:FAKE_KIMI_OWNER_PROBE) {
@@ -171,7 +188,9 @@ exit 0
     $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'Reply exactly KIMI_OK.' -Mode json -TimeoutSeconds 20 2>$null
     if ($env:FLEET_KIMI_TEST_DEBUG) { Write-Host ('DEBUG ' + ($raw -join "`n")) }
     $json = ($raw -join "`n") | ConvertFrom-Json
-    Assert-True ($LASTEXITCODE -eq 0 -and $json.status -eq 'ok' -and $json.model -eq 'kimi-code/k3' -and $json.response -eq 'KIMI_OK' -and $json.permission_policy -match 'static-deny' -and $json.tool_call_count -eq 0) 'isolated Kimi transport did not report the expected proof'
+    # tool_call_count is 1, not 0: the mandatory Read of the prompt-file transport
+    # (fix 2026-08-03) is now the one always-present tool call on a clean lane.
+    Assert-True ($LASTEXITCODE -eq 0 -and $json.status -eq 'ok' -and $json.model -eq 'kimi-code/k3' -and $json.response -eq 'KIMI_OK' -and $json.permission_policy -match 'static-deny' -and $json.tool_call_count -eq 1 -and $json.prompt_transport -eq 'file') 'isolated Kimi transport did not report the expected proof'
   }
   Case 'wrapper quoting round-trips quotes, backticks, newlines, and backslashes' {
     # Load the wrapper's own quoting functions from source (no drift) and parse
@@ -222,15 +241,27 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     $json = ($raw -join "`n") | ConvertFrom-Json
     Assert-True ($LASTEXITCODE -eq 0 -and $json.status -eq 'ok' -and $json.artifact_count -eq 1 -and $json.prompt_bytes -gt 0) ('frozen artifact was not embedded: ' + ($json | ConvertTo-Json -Compress))
   }
-  Case 'oversized artifact pack fails early with prompt_exceeds_command_line' {
-    # No model call: synthetic pack forces the quoted argv past the 30k safe ceiling.
-    $artifact = Join-Path $temp 'oversized-pack.txt'
-    [IO.File]::WriteAllText($artifact, ('X' * 35000))
-    $old = $ErrorActionPreference
-    try { $ErrorActionPreference = 'Continue'; $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'Summarize the packet.' -ArtifactFile $artifact -Mode json -TimeoutSeconds 20 2>$null; $exit = $LASTEXITCODE }
-    finally { $ErrorActionPreference = $old }
+  Case 'large (>40KB) artifact pack succeeds via file-based prompt transport, never trips the argv guard' {
+    # Fix 2026-08-03: prompt_exceeds_command_line used to fire on realistic artifact
+    # packs (observed live at prompt_bytes 47368) because the full prompt rode argv.
+    # It now goes to a frozen file; -p carries only a short static instruction, so a
+    # pack well over the old 30k guard must succeed cleanly.
+    $artifact = Join-Path $temp 'large-pack.txt'
+    [IO.File]::WriteAllText($artifact, ('X' * 45000))
+    $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'Summarize the packet.' -ArtifactFile $artifact -Mode json -TimeoutSeconds 20 2>$null
+    $exit = $LASTEXITCODE
     $json = ($raw -join "`n") | ConvertFrom-Json
-    Assert-True ($exit -ne 0 -and $json.status -eq 'error' -and $json.fail_reason -match 'prompt_exceeds_command_line' -and $json.prompt_bytes -gt 30000) ('oversized pack did not early-fail: ' + ($json | ConvertTo-Json -Compress))
+    Assert-True ($exit -eq 0 -and $json.status -eq 'ok' -and $json.prompt_bytes -gt 40000 -and $json.prompt_transport -eq 'file' -and $json.response -eq 'KIMI_OK') ('large pack did not succeed via file transport: ' + ($json | ConvertTo-Json -Compress))
+  }
+  Case 'kimi did not read the prompt file fails closed' {
+    # Negative control: a lane that skips the mandatory prompt-file Read (the only
+    # way it could learn its task) must not be treated as a legitimate empty-task run.
+    $env:FAKE_KIMI_SKIP_PROMPT_READ = '1'
+    $old = $ErrorActionPreference
+    try { $ErrorActionPreference = 'Continue'; $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'x' -Mode json -TimeoutSeconds 20 2>$null; $exit = $LASTEXITCODE }
+    finally { $ErrorActionPreference = $old; Remove-Item Env:FAKE_KIMI_SKIP_PROMPT_READ -ErrorAction SilentlyContinue }
+    $json = ($raw -join "`n") | ConvertFrom-Json
+    Assert-True ($exit -ne 0 -and $json.status -eq 'error' -and $json.fail_reason -match 'did not read the prompt file') ('skipped prompt-file read was not rejected: ' + ($json | ConvertTo-Json -Compress))
   }
   Case 'research swarm prompt carries tooling constraint; artifact lane does not' {
     # Extract New-KimiPrompt by source boundaries (no model call). Empty artifacts
@@ -242,7 +273,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     Invoke-Expression $src.Substring($start, $end - $start)
     $researchPrompt = New-KimiPrompt -Request 'Research local docs.' -Artifacts @() -Images @() -MaxBytes 1048576 -ResearchSwarm $true -DesignWorkspace $false -WorkspaceDirectory ''
     $artifactPrompt = New-KimiPrompt -Request 'Critique the packet.' -Artifacts @() -Images @() -MaxBytes 1048576 -ResearchSwarm $false -DesignWorkspace $false -WorkspaceDirectory ''
-    $constraint = 'TOOLING CONSTRAINT: no file tools exist in this environment'
+    $constraint = 'TOOLING CONSTRAINT: no file tools are available beyond the Read call already used to load this brief'
     Assert-True ($researchPrompt.Contains($constraint)) 'research-swarm prompt missing tooling constraint preamble'
     Assert-True (-not $artifactPrompt.Contains($constraint)) 'artifact-only prompt unexpectedly carries research tooling constraint'
   }
@@ -617,7 +648,8 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     finally { Pop-Location }
     Assert-True (-not [string]::IsNullOrWhiteSpace($expectedSha)) 'fixture git commit failed'
     # Probe: run wrapper and capture materialization evidence from result JSON.
-    # Fake kimi does not call tools; success proves archive + verification ran pre-launch.
+    # Fake kimi only reads the prompt file (mandatory transport call); success proves
+    # archive + verification ran pre-launch.
     $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'Review the sandbox copy.' -RepoSandbox $fixture -Mode json -TimeoutSeconds 20 2>$null
     $exit = $LASTEXITCODE
     $json = ($raw -join "`n") | ConvertFrom-Json

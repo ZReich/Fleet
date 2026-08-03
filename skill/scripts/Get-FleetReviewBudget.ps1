@@ -103,10 +103,13 @@ $byteTier = if ($transportBytes.Length -le (50 * 1024)) { "tiny" } elseif ($tran
 $riskTier = Get-RiskTier $ReviewRisk
 $selectedTier = if ((Get-TierRank $riskTier) -gt (Get-TierRank $byteTier)) { $riskTier } else { $byteTier }
 
+# codex = the Sol/Terra review seats via Invoke-Sol.ps1 -TimeoutSeconds. They previously
+# got a flat caller-chosen budget; 2026-08-03 r9 killed a mid-work Sol review at 900s on
+# a hard-tier (94KB) packet. Scale them by the same tier as the other seats.
 $budgets = @{
-  tiny = @{ opus = 120; glm = 180 }
-  standard = @{ opus = 300; glm = 600 }
-  hard = @{ opus = 600; glm = 900 }
+  tiny = @{ opus = 120; glm = 180; codex = 300 }
+  standard = @{ opus = 300; glm = 600; codex = 900 }
+  hard = @{ opus = 600; glm = 900; codex = 1800 }
 }
 $promotionReason = if ($selectedTier -ne $byteTier) {
   "review_risk=$ReviewRisk promoted byte_tier=$byteTier to $selectedTier"
@@ -137,6 +140,7 @@ $result = [ordered]@{
   opus_timeout_multiplier = $opusMultiplier
   opus_timeout_seconds = $opusTimeout
   glm_timeout_seconds = $budgets[$selectedTier].glm
+  codex_timeout_seconds = $budgets[$selectedTier].codex
 }
 
 $json = $result | ConvertTo-Json -Depth 6 -Compress

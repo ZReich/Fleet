@@ -1,0 +1,134 @@
+{
+  "schema_version": "1",
+  "description": "Fixed canary set of historical Fleet defects. Replayed k=3 via Enqueue-FleetCanary; labeled canary=true; never sole ship gate.",
+  "tasks": [
+    {
+      "id": "sol-crt-backslash-quote",
+      "title": "Invoke-Sol CRT argv fails on backslash-quote sequences",
+      "source": {
+        "commit": "redacted",
+        "evidence": "Invoke-Sol argv builder broke live on literal backslash-quote sequence (codex exit 2 unexpected argument); CRT encoder + Test-Invoke-Sol fake-launcher coverage."
+      },
+      "prompt": "Reintroduce CRT backslash-before-quote escaping failure in Invoke-Sol.ps1 ConvertTo-WindowsCommandLineArgument so a prompt containing backslash-quote truncates argv; restore with correct 2n+1 CRT encoding.",
+      "task_stratum": "hard",
+      "allowed_paths": ["scripts/Invoke-Sol.ps1", "scripts/Test-Invoke-Sol.ps1"],
+      "mutation": {
+        "path": "scripts/Invoke-Sol.ps1",
+        "break": "Remove or skip backslash doubling before embedded quotes in ConvertTo-WindowsCommandLineArgument so backslash-quote truncates the argv."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-Invoke-Sol.ps1"]
+    },
+    {
+      "id": "structured-audit-truthiness",
+      "title": "Object-returning Test-StructuredAudit used as bare truthiness",
+      "source": {
+        "commit": "redacted",
+        "evidence": "if (Test-StructuredAudit ...) is always truthy because hashtables are true; Test-FleetContract scans for bare truthiness without .valid."
+      },
+      "prompt": "Reintroduce bare truthiness use of an object-returning validator (if (Test-StructuredAudit ...) without .valid) so the contract guard fails; fix by asserting the .valid field.",
+      "task_stratum": "mechanical",
+      "allowed_paths": ["scripts/Invoke-Grok45.ps1", "scripts/Test-FleetContract.ps1"],
+      "mutation": {
+        "path": "scripts/Invoke-Grok45.ps1",
+        "break": "Replace [bool]$auditCheck.valid with bare if (Test-StructuredAudit ...) / truthiness on the returned object."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetContract.ps1"]
+    },
+    {
+      "id": "repair-trailer-eof",
+      "title": "FLEET_REQUIRED_BLOCKERS_V1 trailer must anchor at EOF",
+      "source": {
+        "commit": "redacted",
+        "evidence": "Sol arbitration emitted trailer with prose inside comment or JSON after closing marker; Assert-FleetRepairCoverage anchors at end-of-file and rejects both shapes."
+      },
+      "prompt": "Break Assert-FleetRepairCoverage trailer matching so non-EOF trailers pass; restore end-of-file anchor and reject trailing content after the trailer.",
+      "task_stratum": "mechanical",
+      "allowed_paths": ["scripts/Assert-FleetRepairCoverage.ps1", "scripts/Test-FleetRepairCoverage.ps1"],
+      "mutation": {
+        "path": "scripts/Assert-FleetRepairCoverage.ps1",
+        "break": "Remove the end-of-file anchor from the FLEET_REQUIRED_BLOCKERS_V1 trailer regex so mid-file trailers validate."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetRepairCoverage.ps1"]
+    },
+    {
+      "id": "powershell-empty-backslash-replace",
+      "title": "Python-to-PowerShell write collapsed backslash into empty Replace",
+      "source": {
+        "commit": "redacted",
+        "evidence": "heredoc collapsed backslash escapes so shipped line read empty-string Replace and threw ArgumentException; fix uses $backslash = [string][char]92."
+      },
+      "prompt": "Reintroduce empty-string Replace path normalization (or drop $backslash char-92 construction) so path normalization throws; restore $backslash = [string][char]92 and use it.",
+      "task_stratum": "mechanical",
+      "allowed_paths": ["scripts/Get-FleetReviewPacket.ps1", "scripts/Test-FleetRepairCoverage.ps1"],
+      "mutation": {
+        "path": "scripts/Get-FleetReviewPacket.ps1",
+        "break": "Replace $backslash path normalize with .Replace('','/') or empty first-arg Replace that throws on every call."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetRepairCoverage.ps1"]
+    },
+    {
+      "id": "handoff-output-write-timeout",
+      "title": "Handoff measure output_write phase hard deadline",
+      "source": {
+        "commit": "redacted",
+        "evidence": "internal defect log + Test-FleetHandoffReceipt: output_write hard deadline must fail closed with phase=output_write and bounded elapsed; locked timing numbers need feasibility estimate."
+      },
+      "prompt": "Remove or disable the hard MaxSeconds budget check during phase=output_write in Measure-FleetHandoffPerformance so a blocked write hangs; restore Assert-WithinBudget / taskkill on expiry.",
+      "task_stratum": "standard",
+      "allowed_paths": ["scripts/Measure-FleetHandoffPerformance.ps1", "scripts/New-FleetHandoffReceipt.ps1", "scripts/Test-FleetHandoffReceipt.ps1"],
+      "mutation": {
+        "path": "scripts/Measure-FleetHandoffPerformance.ps1",
+        "break": "Skip Assert-WithinBudget / WaitForExit remainingMs kill path for phase output_write so blocking writes hang past MaxSeconds."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetHandoffReceipt.ps1"]
+    },
+    {
+      "id": "receipt-kill-invalid-marker-pid",
+      "title": "Receipt/owner marker with invalid pid must not pass validation",
+      "source": {
+        "commit": "redacted",
+        "evidence": "internal defect log owed-review + Clear-StaleKimiK3Runtime owner markers: dead/recycled pid or missing marker must not count as live ownership; receipt validation rejects invalid typed markers."
+      },
+      "prompt": "Weaken New-FleetHandoffReceipt validation so invalid typed telemetry markers (string/bool where integer required, or contradictory lifecycle) pass; restore strict type and equality checks.",
+      "task_stratum": "standard",
+      "allowed_paths": ["scripts/New-FleetHandoffReceipt.ps1", "scripts/Test-FleetReceiptValidation.ps1"],
+      "mutation": {
+        "path": "scripts/New-FleetHandoffReceipt.ps1",
+        "break": "Coerce lifecycle_complete / context_bytes / timeout_signals via [int]/[bool] so string/bool false markers validate as success."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetReceiptValidation.ps1"]
+    },
+    {
+      "id": "review-receipt-nonblank-bypass",
+      "title": "Any nonblank v-*.md counted as qualified review voice",
+      "source": {
+        "commit": "redacted",
+        "evidence": "Assert-FleetAdversarialReview counted any nonblank v-*.md as voice (three files with single char x + empty manifest returned verdict ok); MinVoiceBytes + content qualification required."
+      },
+      "prompt": "Lower or remove MinVoiceBytes / content qualification so a one-character v-*.md counts as a qualified voice; restore >=200 byte content checks and real review structure.",
+      "task_stratum": "hard",
+      "allowed_paths": ["scripts/Assert-FleetAdversarialReview.ps1", "scripts/Test-FleetAdversarialReview.ps1"],
+      "mutation": {
+        "path": "scripts/Assert-FleetAdversarialReview.ps1",
+        "break": "Set MinVoiceBytes=1 or qualify any nonblank file so single-character v-*.md voices pass STANDARD/FULL counts."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetAdversarialReview.ps1"]
+    },
+    {
+      "id": "artifact-array-file-binding",
+      "title": "PowerShell -File does not splat [string[]] ArtifactFile arrays",
+      "source": {
+        "commit": "redacted",
+        "evidence": "powershell -File Invoke-Opus48.ps1 -ArtifactFile @(6 paths) binds only first path; callers must comma-join; Test-FleetContract guards -File call sites."
+      },
+      "prompt": "Reintroduce a raw-array ArtifactFile at a -File Invoke-Opus48/Invoke-PiGlm call site (or remove the contract guard) so only the first path binds; restore comma-joined -ArtifactFile ($paths -join ',').",
+      "task_stratum": "mechanical",
+      "allowed_paths": ["scripts/Test-FleetContract.ps1", "SKILL.md"],
+      "mutation": {
+        "path": "scripts/Test-FleetContract.ps1",
+        "break": "Delete or weaken the 'ArtifactFile is comma-joined at -File call sites' case so raw $reviewArtifacts arrays are not rejected."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetContract.ps1"]
+    }
+  ]
+}

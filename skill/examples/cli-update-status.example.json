@@ -1,0 +1,23 @@
+{
+  "_comment": "TEMPLATE. Lives at $env:USERPROFILE/.codex/fleet/cli-update-status.json. A daily read-only audit refreshes it; Fleet reads it at preflight to know which CLIs are current. Never mutates a CLI in place. Values below are placeholders — one candidate shown.",
+  "schema_version": 1,
+  "automation_id": "fleet-cli-update-audit",
+  "checked_at": "<iso-8601-timestamp>",
+  "checked_by": "powershell read-only audit",
+  "current_user": "<user>",
+  "checked_host": "<host>",
+  "promotion_target": null,
+  "update_recommendation": "No promotions executed. Recommend side-by-side idle-state recheck plus required wrapper tests and a minimal live transport proof before any Fleet promotion.",
+  "update_available_any": false,
+  "candidates": [
+    {
+      "name": "grok",
+      "observed_paths": ["$env:USERPROFILE\\<install-path>\\grok.cmd"],
+      "path_discovery": ["PATH", "NVM/native"],
+      "current_versions": ["<installed-version>"],
+      "channels": { "next": "<ver>", "latest": "<ver>", "stable": "<ver>" },
+      "update_available": false,
+      "changelog_sources": ["<vendor-changelog-url>"]
+    }
+  ]
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": "1",
+  "description": "Machine-readable Fleet policy extracted from the contract so both SKILL files reference one source instead of restating tiers, rosters, budgets, and enums.",
+  "review_tiers": {
+    "MICRO": { "max_files": 2, "max_lines": 15, "voices": 0, "user_facing_voices": 1, "build": "direct-edit-no-sol-plan", "target_wall_seconds": 60 },
+    "LIGHT": { "voices_by_review_risk": { "mechanical": 2, "behavior": 3 }, "build": "compact-sol-plan", "target_wall_seconds": 300 },
+    "STANDARD": { "voices": 3, "third_voice": "specialist-by-change-type", "target_wall_seconds": 600 },
+    "FULL": { "voices": 5, "dispatch": "one-concurrent-wave", "fallback": "rolling", "hard_raises_glm_thinking": "high" }
+  },
+  "review_risk": ["mechanical", "behavior", "hard"],
+  "full_panel_voices": ["sol", "terra", "opus", "glm", "grok"],
+  "grading_bias_controls": {
+    "no_self_grade": true,
+    "min_cross_family_graders_for_scored_ranking": 1,
+    "position_swap": true,
+    "anonymize_and_leak_strip": true,
+    "graders_excluded_for_fabrication": ["gemini", "kimi"]
+  },
+  "review_budgets_seconds": {
+    "tiny":     { "opus": 120, "glm": 180 },
+    "standard": { "opus": 300, "glm": 600 },
+    "hard":     { "opus": 600, "glm": 900 }
+  },
+  "auto_shadow": {
+    "mode": "post_hoc_async",
+    "default_p_shadow": 0.15,
+    "daily_floor_when_eligible": 1,
+    "task_strata": ["mechanical", "standard", "hard", "review"],
+    "estimands": ["standardized_model", "optimized_system"],
+    "critical_path_delay_seconds": 0,
+    "shadow_budget_multiple_of_primary_wall": 1.5,
+    "decision_grade_min_pairs": 30,
+    "ledger": "BENCH-shadow.jsonl",
+    "stratified_boost": {
+      "enabled": true,
+      "strata": [
+        {"name": "k3-qualification", "n_target": 10, "ledger": "BENCH-k3-qualification.jsonl", "n_current_source": "dispatched_full_rows", "job_kind": "k3_full_review"},
+        {"name": "opus5-pairs", "n_target": 5, "ledger": "BENCH-opus5-pairs.jsonl", "n_current_source": "valid_rows", "job_kind": "opus5_pair"}
+      ],
+      "daily_boost_cap": 2
+    },
+    "canary_set": {
+      "enabled": true,
+      "manifest": "fleet-canaries.json",
+      "repeat_count": 3,
+      "tasks_per_batch": 1,
+      "sole_ship_gate": false
+    }
+  },
+  "capability_defaults": {
+    "grok_implementation_isolated_worktree": { "subagents": true, "web": true, "memory": false },
+    "grok_benchmark_or_readonly": { "subagents": false, "web": false, "memory": false },
+    "k3_artifact_lane": { "subagents": false, "web": false, "shell": false, "repo": false }
+  },
+  "model_labels": {
+    "sol": "[GPT-5.6 SOL · <ROLE>]",
+    "terra": "[GPT-5.6 TERRA · <ROLE>]",
+    "luna": "[GPT-5.6 LUNA · <ROLE>]",
+    "grok": "[GROK 4.5 · <ROLE>]",
+    "glm": "[GLM 5.2 · <ROLE>]",
+    "gemini": "[GEMINI 3.5 FLASH · VISUAL EVIDENCE]",
+    "kimi": "[KIMI K3 · <ROLE>]",
+    "opus": "[CLAUDE OPUS 4.8 · REVIEW]"
+  },
+  "reviewer_execution_status": ["complete", "outage", "excluded", "no_contest", "invalid"],
+  "claude_pin": {
+    "approved_dir_pattern": ".codex/fleet/clis/claude-<version>",
+    "never_pin_auto_updating_nvm_path": true,
+    "degraded_mode_substitute": { "voice": "glm", "thinking": "high", "record_field": "voice_substituted" }
+  }
+}

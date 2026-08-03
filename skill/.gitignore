@@ -1,0 +1,14 @@
+# runtime state (regenerated per machine)
+approved-clis.json
+cli-update-status.json
+# benchmark ledgers (created on first run, personal data)
+BENCH-*.jsonl
+# run scratch
+.fleet/
+.fleet-charters/
+.fleet-review/
+.fleet-owed/
+*.err
+*.log
+*-stdout.txt
+scripts/Microsoft/

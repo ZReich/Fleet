@@ -1,0 +1,20 @@
+{
+  "_comment": "TEMPLATE. Copy to $env:USERPROFILE/.codex/fleet/approved-clis.json and let Approve-ClaudeCli.ps1 populate it. This file pins the exact CLI bytes Fleet is allowed to run in trusted seats, so an auto-update can't silently swap them mid-run. Values below are placeholders.",
+  "schema_version": "1",
+  "clis": {
+    "claude": {
+      "path": "$env:USERPROFILE\\.codex\\fleet\\clis\\claude-<version>\\claude.cmd",
+      "version": "<version>",
+      "sha256": "<sha256-of-launcher>",
+      "payload_path": "$env:USERPROFILE\\.codex\\fleet\\clis\\claude-<version>\\node_modules\\@anthropic-ai\\claude-code\\bin\\claude.exe",
+      "payload_sha256": "<sha256-of-payload>",
+      "package_version": "<version>",
+      "approved_at": "<iso-8601-timestamp>",
+      "proof": {
+        "offline_suite": "Test-Invoke-Opus48.ps1: passed",
+        "live_probe": "<model-id>: OK",
+        "live_duration_seconds": 0
+      }
+    }
+  }
+}

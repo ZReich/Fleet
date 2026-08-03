@@ -1,0 +1,23 @@
+# Single source of truth for "is this run lease abandoned?".
+#
+# This predicate was copy-pasted into Enter-FleetRunLease.ps1 and Test-FleetRunLease.ps1,
+# and Approve-ClaudeCli.ps1 carried a FOURTH, WEAKER variant that tested `expires_at`
+# alone. The copies drifted in exactly the way that matters: an abandoned run (owner PID
+# dead, or heartbeat older than the staleness window) was reclaimable by Enter — a new
+# run could take the lease — while the promotion gate still read the same file as an
+# ACTIVE RUN and refused to promote a CLI for the rest of the lease's 24h TTL. Two
+# consumers, opposite verdicts, same bytes on disk.
+#
+# Dot-source this from the caller's BODY with $PSScriptRoot (never from a param default —
+# PS 5.1 does not resolve $PSScriptRoot there).
+
+function Test-FleetLeaseReclaimable($lease, [datetimeoffset]$now, [int]$staleHours) {
+  # Unparseable expiry is treated as abandoned: a lease we cannot read cannot be trusted
+  # to be alive, and the alternative is a permanently unclearable file.
+  try { if ([datetimeoffset]$lease.expires_at -le $now) { return $true } } catch { return $true }
+  $leasePid = 0; try { $leasePid = [int]$lease.owner_pid } catch { }
+  if ($leasePid -gt 0 -and -not (Get-Process -Id $leasePid -ErrorAction SilentlyContinue)) { return $true }
+  $hb = $null; try { $hb = [datetimeoffset]$lease.heartbeat_at } catch { }
+  if ($null -ne $hb -and $hb.AddHours($staleHours) -le $now) { return $true }
+  return $false
+}

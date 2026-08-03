@@ -1,0 +1,25 @@
+{
+  "tasks": [
+    {
+      "id": "bounded-bug-fix",
+      "prompt": "Fix the named reproducible bug without changing public behavior outside the failing case. Add or update a focused regression test.",
+      "allowed_paths": ["src/replace-with-target", "tests/replace-with-target"],
+      "max_diff_lines": 200,
+      "gate_commands": ["replace-with-focused-test-command"]
+    },
+    {
+      "id": "maintainability-refactor",
+      "prompt": "Simplify the named implementation while preserving behavior. Reuse existing helpers and do not add dependencies.",
+      "allowed_paths": ["src/replace-with-target", "tests/replace-with-target"],
+      "max_diff_lines": 250,
+      "gate_commands": ["replace-with-focused-test-command", "replace-with-typecheck-command"]
+    },
+    {
+      "id": "regression-test-gap",
+      "prompt": "Add focused coverage for the named untested edge case. Change production code only if the test proves a real defect.",
+      "allowed_paths": ["src/replace-with-target", "tests/replace-with-target"],
+      "max_diff_lines": 180,
+      "gate_commands": ["replace-with-focused-test-command"]
+    }
+  ]
+}

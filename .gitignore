@@ -1,0 +1,7 @@
+# runtime state + ledgers regenerate per machine
+skill/approved-clis.json
+skill/cli-update-status.json
+skill/BENCH-*.jsonl
+skill/.fleet/
+**/*.log
+**/*.err

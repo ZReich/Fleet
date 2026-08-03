@@ -1,6 +1,6 @@
 # Fleet
 
-**Fleet is a way to run a whole team of AI models like an actual dev team — a planner, an implementer, a supervisor, and a panel of reviewers — instead of asking one model to do everything and hoping it's right.**
+**Fleet is an opinionated way to build and research with a whole team of AI models — a planner, an implementer, a supervisor, and a panel of reviewers — instead of asking one model to do everything and hoping it's right.**
 
 Here's the problem it solves. One model planning, writing, *and* reviewing its own code is a model grading its own homework. It'll tell you it's done. It'll sound confident. And it'll ship a bug that "looked fine." Fleet splits those jobs across different models, runs the independent ones at the same time, and puts every change through a blind review it can't skip. The cheap models do the grunt reading. The best model available makes the calls. **Nothing is "done" until the evidence actually says so.**
 
@@ -30,10 +30,10 @@ Fleet has modes. You pick one by how you invoke it:
 | --- | --- | --- |
 | Build / fix / refactor something | `fleet` | Plan → build → review, sized to the risk. The default. |
 | Plan a big feature before building | `fleet plan` | Six models each design it independently and blind, then the plans get merged, attacked, and locked. |
-| Research a question | `fleet research` | Several models search in parallel, each a different way, every source verified. |
-| Design a UI | `fleet design` | Design candidates propose in parallel; the design lead locks the final call. |
 | Review a diff or PR | `fleet review` | The blind panel only — no building. |
 | Clean up a codebase | refactor mode | Scoped to a whole codebase, not a diff. The rule: behavior can't change. |
+
+Research and design aren't separate modes — every build opens with a research brief so nobody reinvents what already exists, and UI/design work routes to the design lead automatically. Ask for deeper research or flag UI work and Fleet leans harder into those lanes.
 
 Full detail on each is in the [Wiki](#the-wiki).
 

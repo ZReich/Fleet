@@ -38,6 +38,7 @@ Invoke-Expression $fnMatch.Groups[1].Value
 
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('fleet-sol-test-' + [guid]::NewGuid().ToString('n'))
 $oldLauncher = $env:FLEET_CODEX_LAUNCHER
+$oldApproved = $env:FLEET_APPROVED_CLIS
 $oldLocalAppData = $env:LOCALAPPDATA
 $oldPath = $env:PATH
 try {
@@ -45,6 +46,9 @@ try {
   $fakeLocal = Join-Path $temp 'localappdata'
   $env:LOCALAPPDATA = $fakeLocal
   Remove-Item Env:FLEET_CODEX_LAUNCHER -ErrorAction SilentlyContinue
+  # Neutralize the approved-pin hop for the resolution-order tests; a dedicated block
+  # below exercises the hop with a temp approved-clis.json.
+  $env:FLEET_APPROVED_CLIS = Join-Path $temp 'no-approved-clis.json'
 
   $nativeRel = 'nvm\v22.22.2\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin'
   $nativeDir = Join-Path $fakeLocal $nativeRel
@@ -88,6 +92,20 @@ try {
   [IO.File]::WriteAllText($nativeExe, 'native')
   [IO.File]::WriteAllText($pathExe, 'path-app')
   $env:PATH = $pathDir + ';' + "$env:SystemRoot\System32"
+
+  # --- approved-pin hop: a codex pin in approved-clis.json wins over native ---
+  $pinExe = Join-Path $temp 'pin-codex.exe'
+  [IO.File]::WriteAllText($pinExe, 'pin')
+  $pinJson = Join-Path $temp 'approved-with-codex.json'
+  [IO.File]::WriteAllText($pinJson, ('{"clis":{"codex":{"path":' + (ConvertTo-Json $pinExe) + '}}}'))
+  $env:FLEET_APPROVED_CLIS = $pinJson
+  $got = Resolve-CodexLauncher
+  Check 'production Resolve-CodexLauncher: approved pin beats native' ($got -eq $pinExe)
+  # a pin whose path is missing falls through to native
+  [IO.File]::WriteAllText($pinJson, '{"clis":{"codex":{"path":"C:\\does\\not\\exist.exe"}}}')
+  $got = Resolve-CodexLauncher
+  Check 'production Resolve-CodexLauncher: missing pin falls through to native' ($got -eq $nativeExe)
+  $env:FLEET_APPROVED_CLIS = Join-Path $temp 'no-approved-clis.json'
 
   function script:codex { return 'function-shadow' }
   $got = Resolve-CodexLauncher
@@ -249,6 +267,8 @@ class FakeCodex {
 finally {
   if ($null -eq $oldLauncher) { Remove-Item Env:FLEET_CODEX_LAUNCHER -ErrorAction SilentlyContinue }
   else { $env:FLEET_CODEX_LAUNCHER = $oldLauncher }
+  if ($null -eq $oldApproved) { Remove-Item Env:FLEET_APPROVED_CLIS -ErrorAction SilentlyContinue }
+  else { $env:FLEET_APPROVED_CLIS = $oldApproved }
   if ($null -ne $oldLocalAppData) { $env:LOCALAPPDATA = $oldLocalAppData }
   if ($null -ne $oldPath) { $env:PATH = $oldPath }
   Remove-Item Env:FAKE_CODEX_ARGV_FILE -ErrorAction SilentlyContinue

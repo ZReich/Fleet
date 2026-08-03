@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Claude Code adapter for the canonical Codex Fleet workflow with Sol planning/final verification, Terra supervision, Grok implementation, Spark synthesis, Gemini evidence, Kimi K3 candidate lanes, and risk-scaled review.
+description: Claude Code adapter for Fleet — an opinionated way to build and research with your whole model fleet as one team (planner, implementer, supervisor, and a blind cross-family review panel) so no model grades its own work. Maps the canonical Codex Fleet contract onto Claude: Sol plans and verifies, Terra supervises, Grok implements, Spark/Kimi/Gemini gather evidence, and risk-scaled adversarial review can't be skipped.
 ---
 
 # Fleet Adapter for Claude Code

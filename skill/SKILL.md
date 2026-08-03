@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Token-efficient Codex-native orchestration with Sol-selected rigor, Terra supervision, Grok 4.5 implementation, Spark repository synthesis, Kimi K3 candidate lanes, and risk-scaled adversarial review.
+description: An opinionated way to build and research with your whole model fleet as one team — planner, implementer, supervisor, and a blind cross-family review panel, so no model grades its own work. Codex-native: Sol plans and owns the final verdict, Terra supervises, Grok implements, Spark/Kimi/Gemini gather evidence, and every change runs risk-scaled adversarial review that can't be skipped.
 ---
 
 # Fleet Orchestration for Codex
@@ -9,6 +9,13 @@ Source lineage: adapted from `$env:USERPROFILE/.claude/skills/fleet/SKILL.md`.
 Design doc: `$env:USERPROFILE/Documents/docs/superpowers/specs/2026-07-03-fleet-orchestration-design.md`.
 
 ## Purpose
+
+Fleet is an opinionated way to build and research with a whole team of models instead
+of one. It started as a way to actually use every model seat we pay for; it is now a
+methodology: split planning, implementation, supervision, and review across different
+model families so no model grades its own work, run the independent parts in parallel,
+and call nothing done until the evidence says so. What follows is that methodology on
+the Codex surface.
 
 Run the fleet from Codex without requiring Claude Code, Opus, or Fable for execution.
 GPT-5.6 Sol plans and returns for final verification. GPT-5.6 Terra supervises

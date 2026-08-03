@@ -42,11 +42,21 @@ $fleetTerseTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop 
 $proc = $null
 
 function Resolve-CodexLauncher {
-  # Deterministic order: explicit override -> known native nvm binary -> PATH
-  # Application -> known nvm .cmd shim. Ignore aliases/functions.
-  # Directory overrides are rejected (-PathType Leaf); fall through.
+  # Deterministic order: explicit override -> approved pin (approved-clis.json) ->
+  # known native nvm binary -> PATH Application -> known nvm .cmd shim. Ignore
+  # aliases/functions. Directory overrides are rejected (-PathType Leaf); fall through.
+  # The approved-pin hop lets a leased side-by-side upgrade (e.g. the codex
+  # supports_reasoning_summaries catalog-schema skew) route Sol to a proven build
+  # without an in-place npm replace; a future bump is just an approved-clis.json edit.
   if ($env:FLEET_CODEX_LAUNCHER -and (Test-Path -LiteralPath $env:FLEET_CODEX_LAUNCHER -PathType Leaf)) {
     return $env:FLEET_CODEX_LAUNCHER
+  }
+  $approvedPin = if ($env:FLEET_APPROVED_CLIS) { $env:FLEET_APPROVED_CLIS } else { Join-Path $env:USERPROFILE '.codex\fleet\approved-clis.json' }
+  if (Test-Path -LiteralPath $approvedPin) {
+    try {
+      $pinPath = (Get-Content -Raw -LiteralPath $approvedPin | ConvertFrom-Json).clis.codex.path
+      if ($pinPath -and (Test-Path -LiteralPath $pinPath -PathType Leaf)) { return $pinPath }
+    } catch { }
   }
   $knownNative = @(
     "$env:LOCALAPPDATA\nvm\v22.22.2\node_modules\@openai\codex\node_modules\@openai\codex-win32-x64\vendor\x86_64-pc-windows-msvc\bin\codex.exe",

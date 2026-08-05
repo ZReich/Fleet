@@ -71,6 +71,9 @@ an independent voice; it is the exact claim the review exists to check.
   a zero or missing denominator did not run.
 - Append at least one LESSONS.md line whenever the run had any retry, timeout, or
   substituted voice — a run with retries and no LESSONS entry is an unfinished report.
+- merge-readiness runs MUST quote the `merge-readiness: ...` reducer line verbatim
+  from `scripts/Assert-FleetMergeReadiness.ps1` (same "missing line = did not run"
+  rule as Fallow / filesize / lane-spans).
 
 The adversarial review is a STANDING step after every coding/fix/config wave — not
 something the user has to ask for, and not optional because tests are green. Runs that
@@ -158,6 +161,10 @@ is a WATCH, never a pass. Quote `static-gates: N/5 measured`, never a bare zero.
   concurrent wave -> Sol arbitration.
 - `review`: no build. Snapshot the diff/PR, freeze the packet, run the tier's blind
   voices in one concurrent wave, consolidate fixes.
+- `merge-readiness`: review-oriented mode (STANDARD or FULL by risk) that runs the
+  named-stage contract + deterministic reducer in
+  [references/merge-readiness.md](references/merge-readiness.md). Distinct from
+  ordinary `review` (plain diff panel stays as-is).
 - `plan`: no build. Completeness-first planning for BIG projects only (explicit
   `fleet plan` or Sol judges big/ambiguous/long-horizon). Shared cheap evidence pack
   -> six-seat blind diverge (Fable, Sol, Grok, GLM, Kimi proxy, Gemini 3.1 Pro High)
@@ -224,6 +231,14 @@ GLM transport in this Codex workflow.
    loudly and apply the documented degraded mode: substitute one cross-family voice
    (GLM `-Thinking high`) and record `voice_substituted` — never silently run a smaller
    panel while claiming full coverage.
+   Each stage charter declares `primary` / `fallbacks` / `fallback_on` /
+   `fail_closed_on`. The wrapper never reroutes internally; each fallback is a
+   separately labeled lane with its own receipt + lane-span. Low-quality output or a
+   NO-GO verdict never triggers a model fallback — only transport error, provider
+   outage, or no-equivalent-authority does. Merge-readiness stage fallback wording
+   is scoped to merge-readiness stages; does not change the global no-internal-reroute
+   / no_contest rule above — see [references/merge-readiness.md](references/merge-readiness.md)
+   Fallback semantics (canonical).
    Cache each lane's live-probe result keyed on (cli, version) from
    `cli-update-status.json`: skip re-probing within 24h (1h while a run lease is held);
    a `-ForceProbe` flag always re-probes. Unchanged versions do not pay a fresh probe.
@@ -289,6 +304,9 @@ lanes decay — these are now MUSTS:
 5. **Accountability:** the final report's utilization table always carries a Spark
    row (lanes run, bytes summarized). A run whose supervisor read >200-line artifacts
    raw must say why in the report.
+6. **merge-readiness `change-map`:** for merge-readiness runs, the `change-map` stage
+   is a Spark lane by default and MUST emit `.fleet/change-map.md` + its receipt.
+   No new lane type — formalizes the existing Spark bulk-read mandate.
 
 Use `rg`/JCodeMunch first for exact file, symbol, and reference lookup. Use Spark
 (`gpt-5.3-codex-spark`, low) for multi-file exploration, context-pack synthesis,
@@ -447,6 +465,8 @@ Canonical labels:
 | Giant-context reads, Google-grounded research | Antigravity/Gemini |
 | Real-world/X research | Grok 4.5 |
 | Mechanical lanes: receipt validation, lane-fit aggregation, exploration/parse-only | Fast tier: Gemini flash or forced-low effort; metric = `duration_s` on mechanical lanes |
+| Author-Judge Independence | Author/repair model never owns that stage's final acceptance; `verify-N` uses an independent stronger-judgment voice (cross-family where risk warrants) |
+| change-map / merge-readiness stage routing | See [references/routing-evidence.md](references/routing-evidence.md) (provenance only; internal ledgers dominate) |
 
 Use Codex native subagents when the active tool surface exposes them. Otherwise
 use `codex exec` only for Codex worker lanes, preferably in a separate worktree
@@ -984,6 +1004,15 @@ Review/read-only prompts must request free-form Markdown and must not demand the
 
 ## Liveness
 
+Stage charters declare `primary` / `fallbacks` / `fallback_on` / `fail_closed_on`.
+Wrappers never reroute internally: a fallback is a new labeled lane with its own
+receipt + lane-span (`fallback_of` set). Low-quality output or NO-GO never triggers
+a model fallback — transport error, provider outage, or no-equivalent-authority only.
+Merge-readiness stage fallback is scoped to merge-readiness stages; does not change
+the global no-internal-reroute / no_contest rule above — canonical statement in
+[references/merge-readiness.md](references/merge-readiness.md) Fallback semantics
+(`fallback_of` = receipt form of `voice_substituted`; fallback lane sets both).
+
 Use hard timeouts and output files for external CLIs:
 
 | Tag | Budget |
@@ -1201,6 +1230,9 @@ Include only:
   and whether code was already usable before report completion. Separate model,
   tool, environment, acceptance, and orchestration failures; never attribute total
   task wall time to Grok without phase evidence.
+- merge-readiness runs: stage matrix + fallback provenance (each stage: model,
+  status, `fallback_of`); quote the `merge-readiness: ...` reducer line; no
+  narrative duplication of stage bodies.
 
 No commits or pushes unless the user asked.
 

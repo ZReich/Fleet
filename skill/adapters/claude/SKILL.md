@@ -103,6 +103,15 @@ Fable/Opus/four-voice drift.
   the Agent tool (`model: fable` — diverge high, merge high). Six-seat blind diverge,
   Fable merge, FULL blind attack, Sol xhigh ratify. All PLAN lanes are free-form
   markdown (harness law).
+- merge-readiness stages dispatch as model-first background wrapper lanes; conditional
+  audits launch concurrently in one message. Canonical contract:
+  `references/merge-readiness.md` (do not restate stage graph/receipt schema here).
+- Claude root runs canonical `scripts/Assert-FleetMergeReadiness.ps1` and quotes its
+  exact `merge-readiness: ...` line; root NEVER substitutes its own review for a
+  missing receipt.
+- Fallback launches are NEW labeled wrapper invocations with independent receipts;
+  never hidden inside an Agent or Bash transport. Routing provenance:
+  `references/routing-evidence.md`.
 
 ## Canonical External Lanes
 

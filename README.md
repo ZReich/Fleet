@@ -16,7 +16,7 @@ You ask for something. Fleet:
 2. **Plans it** — a planner model writes a locked plan: what changes, in what order, in which files, and *why*. It owns the design decisions.
 3. **Builds it in parallel** — independent pieces run at the same time in isolated worktrees. The implementer writes the code, then immediately reviews and fixes its own work in a second pass before anything else sees it.
 4. **Reviews it hard** — a panel of models from *different families* reviews the change blind. No model grades its own work. And the review can’t be quietly faked or skipped: every review receipt is cryptographically signed with a per-run key, so nobody can swap in a weaker reviewer, rename a file to fake a security voice, or drop a step. If a hosted model *refuses* a security review — and they do, all the time — Fleet hands it straight to the open-weights models instead of stalling out. Real bugs get found here, not in production.
-5. **Proves it** — every gate quotes what it actually ran (`tests: 274/274`, not "tests pass"). Green that can't be proven doesn't count.
+5. **Proves it** — every gate quotes what it actually ran (`tests: 274/274`, not "tests pass"), and the receipt that says it passed is signed, so "it passed" is something you can verify, not just take on faith. Green that can't be proven doesn't count.
 
 **The whole thing scales to the risk.** A typo fix doesn't get a five-model panel. A payment path change does.
 

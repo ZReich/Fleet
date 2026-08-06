@@ -13,10 +13,18 @@ param(
   # (policy: never net growth on monsters, but small fixes are legal). Additions
   # at or under this grace are WARN, not violation.
   [int]$GraceLines = 15,
+  # Test SUITES legitimately hold many negative-control cases and blow the source cap
+  # every feature. They get a higher (still bounded) cap; abuse is caught in review.
+  [int]$TestFileMaxLines = 600,
+  [string]$TestFilePattern = '(^|/)Test-[^/]*\.ps1$|\.Tests\.(ps1|ts|tsx|js|jsx|py)$|(^|/)[^/]*\.(test|spec)\.(ts|tsx|js|jsx|py)$',
   # Extensions treated as source. Keep tight; artifacts/locks are not source.
   [string[]]$SourceExtensions = @('.ts','.tsx','.js','.jsx','.vue','.py','.ps1','.psm1','.cs','.go','.rb','.php','.java'),
   [string]$ExcludePattern = '(^|/)(dist|build|node_modules|coverage)/|\.min\.|package-lock|\.d\.ts$'
 )
+function Get-EffectiveMaxLines([string]$Path) {
+  if ($Path -match $TestFilePattern) { return $TestFileMaxLines }
+  return $MaxLines
+}
 $ErrorActionPreference = 'Stop'
 $RepoPath = (Resolve-Path -LiteralPath $RepoPath).Path
 
@@ -43,12 +51,13 @@ foreach ($line in @($numstat)) {
   $count = 0
   $reader = New-Object IO.StreamReader($full)
   try { while ($null -ne $reader.ReadLine()) { $count++ } } finally { $reader.Dispose() }
-  if ($count -le $MaxLines) { continue }
+  $effMax = Get-EffectiveMaxLines $path
+  if ($count -le $effMax) { continue }
   # Was it already over the cap at base? (New files fail `git show` -> base 0.)
   $baseCount = 0
   $baseContent = & git -C $RepoPath show ("{0}:{1}" -f $BaseRef, $path) 2>$null
   if ($LASTEXITCODE -eq 0) { $baseCount = @($baseContent).Count }
-  if ($baseCount -gt $MaxLines -and $added -le $GraceLines) {
+  if ($baseCount -gt $effMax -and $added -le $GraceLines) {
     [void]$warnings.Add([pscustomobject]@{ lines = $count; added = $added; path = $path })
     continue
   }
@@ -77,7 +86,7 @@ foreach ($upath in $untracked) {
   $count = 0
   $reader = New-Object IO.StreamReader($full)
   try { while ($null -ne $reader.ReadLine()) { $count++ } } finally { $reader.Dispose() }
-  if ($count -le $MaxLines) { continue }
+  if ($count -le (Get-EffectiveMaxLines $path)) { continue }
   [void]$violations.Add([pscustomobject]@{ lines = $count; added = $count; path = $path })
 }
 

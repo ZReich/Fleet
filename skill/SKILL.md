@@ -139,6 +139,49 @@ anti-serialization validation gate.
   review voice, substitute instantly (Terra or GLM, labeled `voice_substituted`)
   and let the round complete — never hold a round waiting on a dead voice.
 
+## Performance discipline (2026-08-06 — from the long-run retrospective)
+
+These five rules exist because ignoring them cost most of a very long day. They are as binding as
+the Definition of Done.
+
+1. **PS deliverables get their `-SelfTest` RUN before acceptance — Grok cannot execute PowerShell.**
+   Grok (no isolated worktree) writes `.ps1` that PARSES CLEAN and crashes only at runtime; every
+   PS lane on 2026-08-05/06 shipped a runtime bug (var-collision, `[string]$null`→"", `${var}:`,
+   null-vs-empty, `-replace` key corruption). MANDATORY: every charter producing a `.ps1` PASTES
+   [references/ps51-footguns.md](references/ps51-footguns.md) and requires a self-check against it;
+   the orchestrator runs `Parser::ParseFile` + the script's `-SelfTest` and bounces failures BEFORE
+   marking the lane done. A "parses clean" self-report is not proof. Prefer dispatching PS-heavy
+   Grok work with `-IsolatedWorktree -BashCapability Auto` so Grok runs its own self-test first.
+
+2. **A new gate CHECK owns ALL its fixtures.** When a charter adds a validation check (result-file
+   hash, signature, packet/plan binding), its write-scope MUST include every harness/fixture/emitter
+   file that builds inputs for that check (e.g. `Test-FleetContract.ps1`, sibling emitters) — not
+   just the gate + its own test. Otherwise the check ripples into fixtures the lane didn't own and
+   costs a whole extra realign round (hit repeatedly today). Budget the fixture-realign in the same
+   lane.
+
+3. **2 consecutive new-bypass rounds on a trust-validator ⇒ REDESIGN the trust model, do NOT patch.**
+   A gate that VALIDATES caller-supplied convention-named artifacts (filenames, unsigned receipts,
+   caller-passed plans) is a bottomless well: an adversarial panel finds a NEW bypass class every
+   round. The review-integrity gate burned TWO full 3-round-cap runs before we switched to
+   cryptographic provenance (HMAC-signed receipts, key out of reach, verify-signature-first) — which
+   closed the whole class at once. If round N and N+1 each surface a *new* class of false-pass, stop
+   patching instances; escalate to a structural/fail-closed or signed design immediately. (See
+   [references/review-integrity.md](references/review-integrity.md) for the signed pattern.)
+
+4. **Security/gate self-review auto-fails-over on a Sol content-filter refusal.** Sol (codex)
+   REFUSES offensive-framed briefs ("defeat/attack/probe/execute") with no verdict; it happened 3×.
+   A review lane whose result is a refusal (`Test-FleetLaneRefusal`) is recorded `outcome=refused`
+   and the same frozen brief auto-re-dispatches to the open-weights voices (GLM/Kimi/Grok) — the
+   refusal-failover policy, fired automatically, not hand-rerouted. Give Sol the DEFENSIVE framing;
+   keep the blunt "find any defeating input" briefs for the open-weights voices. Template:
+   [references/defensive-review-brief.md](references/defensive-review-brief.md).
+
+5. **Test suites are exempt from the 300-line source cap** (raised to 600 via
+   `Assert-FleetFileSize.ps1 -TestFileMaxLines`, matching `Test-*.ps1` / `*.Tests.*` / `*.spec.*`).
+   Comprehensive negative-control suites legitimately exceed 300; do NOT run a compression lane for
+   them (wasted two today). Extract shared fixtures into a `*Test.Helpers.ps1` when a suite is large.
+
 ## Modes / Tiers
 
 `auto` default: Sol selects the tier from the evidence brief in the same planning

@@ -61,19 +61,32 @@ an independent voice; it is the exact claim the review exists to check.
 - `fallow audit` (JS/TS changed code, from the package root) → quote `fallow: N new
   findings`; non-JS/TS quote `static-gates: N/5 measured` per gate-adapters.md.
 - `Assert-FleetFileSize.ps1 -BaseRef <base>` → quote the `filesize:` line.
+- Review runs MUST quote `review-integrity: ...` from
+  `scripts/Assert-FleetReviewIntegrity.ps1 -ReceiptDir <dir> -RunId <id> -SpanLedger <l>
+  -BaseManifest <m>` (HMAC-verify every receipt against the run lease key before
+  trusting fields; effective ExpectedLaneManifest = base expected + proven failover
+  lane IDs; immutable pre-dispatch preserved). Canonical:
+  [references/review-integrity.md](references/review-integrity.md).
 - `Assert-FleetLaneSpans.ps1 -RunId <id> -LedgerPath <l> -ExpectedLaneManifest <m>` →
   quote its summary line (proves every expected lane actually ran, not just the cheap ones).
-- `Assert-FleetAdversarialReview.ps1 -Repo <repo> -BaseRef <base>` → quote its summary
-  line. This proves review receipts EXIST and COVER the current diff (older-diff receipts
-  do not count). MICRO is the ONLY exemption and must say so: "MICRO: deterministic gates
-  only". Everything above MICRO needs real voices — see the Lane Utilization Contract.
+  For review runs `<m>` is the **EFFECTIVE** manifest from the review-integrity gate.
+- `Assert-FleetAdversarialReview.ps1 -Repo <repo> -BaseRef <base> -RunId <id>
+  -ReceiptDir <dir> -PacketManifest <path>` → quote its summary line. Proves signed
+  review receipts EXIST, verify HMAC against the run lease key, and COVER the current
+  diff (older-diff receipts do not count). Filename is display only; model/security
+  identity come from signed fields. MICRO is the ONLY exemption and must say so:
+  "MICRO: deterministic gates only". Everything above MICRO needs real voices — see
+  the Lane Utilization Contract. `review_profile: security-sensitive` also requires a
+  security-voice identity (`v-glm-security` / `v-kimi-security`; `v-grok-security`
+  backup) — see review-integrity.md.
 - Tests / build the repo defines → quote the count WITH a denominator (`tests: 274/274`);
   a zero or missing denominator did not run.
 - Append at least one LESSONS.md line whenever the run had any retry, timeout, or
   substituted voice — a run with retries and no LESSONS entry is an unfinished report.
 - merge-readiness runs MUST quote the `merge-readiness: ...` reducer line verbatim
-  from `scripts/Assert-FleetMergeReadiness.ps1` (same "missing line = did not run"
-  rule as Fallow / filesize / lane-spans).
+  from `scripts/Assert-FleetMergeReadiness.ps1 -ReceiptDir <dir> -RunId <id>
+  -ExpectedPacketSha256 <hex>` (same "missing line = did not run" rule as Fallow /
+  filesize / lane-spans).
 
 The adversarial review is a STANDING step after every coding/fix/config wave — not
 something the user has to ask for, and not optional because tests are green. Runs that
@@ -91,7 +104,7 @@ single-model collapse:
 | MICRO | deterministic gates only — state it explicitly, zero model voices |
 | LIGHT | Sol + fresh Terra; +1 cross-family (GLM via `Invoke-PiGlm.ps1`) when behavior is touched |
 | STANDARD | Sol + Terra + one specialist third voice by change type |
-| FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security triggers add `[GLM 5.2 · SECURITY]` + `[KIMI K3 · SECURITY]` by default. |
+| FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security / `review_profile: security-sensitive` MUST dispatch >=1 open-weights security identity (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic `v-glm`/`v-kimi`/`v-kimi-proxy` do not satisfy. A hosted refusal MUST trigger open-weights failover (>=1 real completion from {Kimi, GLM, Grok}); see [references/review-integrity.md](references/review-integrity.md). |
 
 Implementation default for non-design work is Grok 4.5 via `Invoke-Grok45.ps1` (one
 cohesive charter + one structured self-review) — NOT Terra implementing inline. Design,
@@ -161,10 +174,15 @@ is a WATCH, never a pass. Quote `static-gates: N/5 measured`, never a bare zero.
   concurrent wave -> Sol arbitration.
 - `review`: no build. Snapshot the diff/PR, freeze the packet, run the tier's blind
   voices in one concurrent wave, consolidate fixes.
-- `merge-readiness`: review-oriented mode (STANDARD or FULL by risk) that runs the
-  named-stage contract + deterministic reducer in
+- `merge-readiness`: invoke `/fleet merge-readiness <task>`. Review-oriented mode
+  (STANDARD or FULL by risk); named-stage contract + deterministic reducer in
   [references/merge-readiness.md](references/merge-readiness.md). Distinct from
-  ordinary `review` (plain diff panel stays as-is).
+  ordinary `review` (plain diff panel stays as-is). Gate order: change-map ->
+  conditionals -> synthesis / adversarial-challenge / triage -> repair/verify
+  (cap 3) -> deployment-runbook (when deploy/infra) -> review-integrity gate ->
+  lane-span (effective manifest) -> adversarial-review (incl. security identity)
+  -> reducer; quote the `merge-readiness: ...` reducer line. Integrity policy:
+  [references/review-integrity.md](references/review-integrity.md).
 - `plan`: no build. Completeness-first planning for BIG projects only (explicit
   `fleet plan` or Sol judges big/ambiguous/long-horizon). Shared cheap evidence pack
   -> six-seat blind diverge (Fable, Sol, Grok, GLM, Kimi proxy, Gemini 3.1 Pro High)
@@ -186,9 +204,12 @@ GLM transport in this Codex workflow.
 2. Check dirty state. Proceed on clear, reversible work; avoid mixing unrelated changes.
    Before any lane dispatch, create one run lease with
    `scripts/Enter-FleetRunLease.ps1 -RunId <run_id>` and retain that run ID through
-   final verification. Renew with `scripts/Renew-FleetRunLease.ps1 -RunId <run_id>`
-   at every phase transition and at least hourly during long phases. Release it with
-   `scripts/Exit-FleetRunLease.ps1 -RunId <run_id>`, including failed runs.
+   final verification. The lease carries the per-run receipt HMAC key (never written
+   to repo, receipt, stdout, env, or prompts). Renew with
+   `scripts/Renew-FleetRunLease.ps1 -RunId <run_id>` at every phase transition and at
+   least hourly during long phases. Release it with
+   `scripts/Exit-FleetRunLease.ps1 -RunId <run_id>`, including failed runs. Run all
+   receipt gates before Exit (post-exit archival verify unsupported).
 3. Read `$env:USERPROFILE/.codex/fleet/cli-update-status.json`. The daily
    automation refreshes it for Codex (runs Sol/Terra/Luna), Grok, Claude, Pi, Antigravity, and Kimi Code.
    Codex was previously unaudited even though it runs every Sol/Terra lane; track it now. The
@@ -235,10 +256,15 @@ GLM transport in this Codex workflow.
    `fail_closed_on`. The wrapper never reroutes internally; each fallback is a
    separately labeled lane with its own receipt + lane-span. Low-quality output or a
    NO-GO verdict never triggers a model fallback — only transport error, provider
-   outage, or no-equivalent-authority does. Merge-readiness stage fallback wording
-   is scoped to merge-readiness stages; does not change the global no-internal-reroute
-   / no_contest rule above — see [references/merge-readiness.md](references/merge-readiness.md)
-   Fallback semantics (canonical).
+   outage, or no-equivalent-authority does. A hosted **REFUSAL** is a settled semantic
+   outcome (not transport `no_contest`): it DOES trigger open-weights failover as NEW
+   labeled lanes with `error.type=model_refusal` — a negative verdict/BLOCK never
+   triggers failover, only a refusal does. Canonical:
+   [references/review-integrity.md](references/review-integrity.md). Merge-readiness
+   stage fallback wording is scoped to merge-readiness stages; does not change the
+   global no-internal-reroute / no_contest rule above — see
+   [references/merge-readiness.md](references/merge-readiness.md) Fallback semantics
+   (canonical).
    Cache each lane's live-probe result keyed on (cli, version) from
    `cli-update-status.json`: skip re-probing within 24h (1h while a run lease is held);
    a `-ForceProbe` flag always re-probes. Unchanged versions do not pay a fresh probe.
@@ -461,7 +487,7 @@ Canonical labels:
 | Long-context plan challenge, independent design red team | Kimi K3 frozen-artifact candidate lane; Sol locks decisions and gives final verdict |
 | Measuring Grok's design taste (not shipping it) | Optional `[GROK · DESIGN PROPOSAL]` frozen-artifact, no-write candidate lane in explicit benchmark mode only, mirroring Kimi; proposals never ship. Quarterly blind design-off, cross-family graded, predeclared non-inferiority bar; passing promotes only to "Grok may propose, Sol locks." This is also the counterweight that samples the stratum the shadow `coverage_scope` filter excludes |
 | Broad web research / red-team sweep needing agent fan-out | Kimi K3 `[KIMI K3 · RESEARCH]` swarm lane (`-ResearchSwarm`; network + AgentSwarm on, no repo/write) when Sol judges breadth needs it; single lookups stay on `rg`/Spark/Grok X. Live transport + model-refusal proven 2026-07-18 |
-| Security scanning / vuln audit of our own code (defensive) | TWO open-weights voices dispatch BY DEFAULT alongside the panel whenever a security trigger selects FULL (owner directive 2026-07-22). Both are open-weights (K3 Moonshot, GLM 5.2 Zhipu) and pursue exploit-path analysis — injection chains, deserialization, authz-bypass construction — more bluntly where hosted models (Sol especially, Fable→Opus) soften, generalize, or refuse offensive detail even in a defensive audit. **They get DIFFERENT repo visibility by design:** `[GLM 5.2 · SECURITY]` runs LIVE read-only against the real checkout (`Invoke-PiGlm.ps1 -ReadOnly -Thinking high`, tools `read,grep,find,ls`; edit/bash/approve denied) so it crawls the whole tree and follows cross-file taint→sink flow on demand. `[KIMI K3 · SECURITY]` stays boxed (ephemeral home + copied creds + auto-approve = no live FS) and instead receives the FULL security-relevant corpus embedded as a frozen artifact — the `[KIMI K3 · LONG-HORIZON]` full-repo pattern (1M context), assembled by the manager with `rg`, NOT a diff-only packet. Repo bigger than ~1M tokens: scope the embed to the security surface (auth, input handling, routes, query/DB construction, deserialization, file I/O, crypto, secrets) or chunk; GLM's live lane has no embed limit. They run concurrently with each other and the panel, so two open-weights security voices cost no extra wall-clock. Findings are ADDITIVE — any voice's security finding counts once verified against source; Sol keeps the final security verdict, and neither K3 nor GLM grades other models. Defensive audit of OUR OWN code only — never third-party targets |
+| Security scanning / vuln audit of our own code (defensive) | TWO open-weights voices dispatch BY DEFAULT alongside the panel whenever a security trigger selects FULL (owner directive 2026-07-22). `review_profile: security-sensitive` forces FULL and requires >=1 security-voice **identity** (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic seats do not satisfy ([references/review-integrity.md](references/review-integrity.md)). Both are open-weights (K3 Moonshot, GLM 5.2 Zhipu) and pursue exploit-path analysis — injection chains, deserialization, authz-bypass construction — more bluntly where hosted models (Sol especially, Fable→Opus) soften, generalize, or refuse offensive detail even in a defensive audit. Hosted refusal on this path → open-weights failover per review-integrity.md (never `no_contest`). **They get DIFFERENT repo visibility by design:** `[GLM 5.2 · SECURITY]` runs LIVE read-only against the real checkout (`Invoke-PiGlm.ps1 -ReadOnly -Thinking high`, tools `read,grep,find,ls`; edit/bash/approve denied) so it crawls the whole tree and follows cross-file taint→sink flow on demand. `[KIMI K3 · SECURITY]` stays boxed (ephemeral home + copied creds + auto-approve = no live FS) and instead receives the FULL security-relevant corpus embedded as a frozen artifact — the `[KIMI K3 · LONG-HORIZON]` full-repo pattern (1M context), assembled by the manager with `rg`, NOT a diff-only packet. Repo bigger than ~1M tokens: scope the embed to the security surface (auth, input handling, routes, query/DB construction, deserialization, file I/O, crypto, secrets) or chunk; GLM's live lane has no embed limit. They run concurrently with each other and the panel, so two open-weights security voices cost no extra wall-clock. Findings are ADDITIVE — any voice's security finding counts once verified against source; Sol keeps the final security verdict, and neither K3 nor GLM grades other models. Defensive audit of OUR OWN code only — never third-party targets |
 | Giant-context reads, Google-grounded research | Antigravity/Gemini |
 | Real-world/X research | Grok 4.5 |
 | Mechanical lanes: receipt validation, lane-fit aggregation, exploration/parse-only | Fast tier: Gemini flash or forced-low effort; metric = `duration_s` on mechanical lanes |
@@ -1008,8 +1034,12 @@ Stage charters declare `primary` / `fallbacks` / `fallback_on` / `fail_closed_on
 Wrappers never reroute internally: a fallback is a new labeled lane with its own
 receipt + lane-span (`fallback_of` set). Low-quality output or NO-GO never triggers
 a model fallback — transport error, provider outage, or no-equivalent-authority only.
-Merge-readiness stage fallback is scoped to merge-readiness stages; does not change
-the global no-internal-reroute / no_contest rule above — canonical statement in
+A hosted **REFUSAL** is settled semantics (not transport): record
+`error.type=model_refusal` and dispatch open-weights failover as NEW labeled lanes
+(byte-identical charter); BLOCK/real findings never trigger failover. Canonical:
+[references/review-integrity.md](references/review-integrity.md). Merge-readiness
+stage fallback is scoped to merge-readiness stages; does not change the global
+no-internal-reroute / no_contest rule above — canonical statement in
 [references/merge-readiness.md](references/merge-readiness.md) Fallback semantics
 (`fallback_of` = receipt form of `voice_substituted`; fallback lane sets both).
 
@@ -1199,15 +1229,39 @@ self-review and never counts as an independent voice. The owner had to ask every
 Enforcement, so this cannot depend on the orchestrator remembering:
 
 - A run is NOT complete until `scripts/Assert-FleetAdversarialReview.ps1 -Repo <repo>
-  -BaseRef <base>` passes and its summary line is quoted in the final report, exactly like
-  the Fallow, filesize, and lane-completion lines.
-- That gate proves receipts EXIST and COVER the shipped diff: a frozen packet whose
-  manifest matches the current diff, plus wrapper result files from the tier's voices.
-  Receipts for an older diff do not count.
+  -BaseRef <base> -RunId <id> -ReceiptDir <dir> -PacketManifest <path>` passes and its
+  summary line is quoted in the final report, exactly like the Fallow, filesize, and
+  lane-completion lines.
+- That gate proves **signed v2** receipts EXIST, HMAC-verify against the run lease key,
+  and COVER the shipped diff: a frozen packet whose manifest matches the current diff,
+  plus result files bound by signed `result_path`/`result_sha256`. Filename is display
+  only. Receipts for an older diff do not count. With `review_profile: security-sensitive`
+  it also requires >=1 open-weights security identity from signed
+  `requested_model`+`review_role` (`v-glm-security` / `v-kimi-security`;
+  `v-grok-security` backup) — see
+  [references/review-integrity.md](references/review-integrity.md).
+- Review runs also quote `review-integrity: ...` from
+  `scripts/Assert-FleetReviewIntegrity.ps1 -ReceiptDir <dir> -RunId <id> -SpanLedger <l>
+  -BaseManifest <m>` (signature-first; refusal recording + open-weights failover
+  coverage; lane-spans consume the **effective** ExpectedLaneManifest).
 - Tier still scales the voice count (MICRO = deterministic gates only, and say so
   explicitly); everything above MICRO needs real voices.
 - Suites, self-repros, and mutation proofs are PRE-conditions for review, not substitutes
   for it. "I verified it myself" is the exact claim the review exists to check.
+
+## Signed receipt cutover (v2 HMAC — atomic, fail-closed)
+
+Receipts consumed by review-integrity, adversarial-review, and merge-readiness are
+**schema v2 HMAC-SHA256 signed**. No unsigned-compat mode: v1/unsigned receipts are
+rejected. Gates require external `-RunId`, load the active run lease key, and verify
+signatures **before** trusting any receipt field. Model identity is derived by the
+signing shim `scripts/Invoke-FleetSignedLane.ps1` (caller cannot supply
+`requested_model`/`observed_model`/`model_evidence`/`emitter_id`). The merge reducer
+requires `-ExpectedPacketSha256` (packet-majority election removed). The per-run HMAC
+key lives only in the run lease under `%USERPROFILE%\.codex\fleet\run-leases\` — never
+in repo, receipt, or stdout. Algorithm, field order, and fail-closed order:
+[references/review-integrity.md](references/review-integrity.md) (canonical; do not
+duplicate here). Integration harness: `scripts/Test-FleetContract.ps1`.
 
 ## Final Report
 
@@ -1233,6 +1287,10 @@ Include only:
 - merge-readiness runs: stage matrix + fallback provenance (each stage: model,
   status, `fallback_of`); quote the `merge-readiness: ...` reducer line; no
   narrative duplication of stage bodies.
+- review / merge-readiness: quote `review-integrity: ...`; note effective vs
+  pre-dispatch lane manifest; when `review_profile: security-sensitive`, name the
+  security identity that satisfied the gate
+  ([references/review-integrity.md](references/review-integrity.md)).
 
 No commits or pushes unless the user asked.
 

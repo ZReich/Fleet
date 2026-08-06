@@ -48,20 +48,33 @@ try {
   $effectiveOwnerPid = if ($OwnerPid -gt 0) { $OwnerPid } else {
     try { [int](Get-CimInstance Win32_Process -Filter "ProcessId=$PID" -ErrorAction Stop).ParentProcessId } catch { 0 }
   }
+  # Fresh HMAC material every enter/reclaim — never reuse a prior run's secret.
+  # Capture as single object; never let key material touch stdout.
+  $hmac = New-FleetRunLeaseHmacMaterial
+  if ($null -eq $hmac -or [string]::IsNullOrEmpty([string]$hmac.KeyId) -or [string]::IsNullOrEmpty([string]$hmac.KeyB64)) {
+    throw 'Fleet run lease HMAC material generation failed.'
+  }
+  $ownerVal = $null
+  if ($effectiveOwnerPid -gt 0) { $ownerVal = $effectiveOwnerPid }
   $record = [ordered]@{
-    schema_version = '1'
+    schema_version = '2'
     run_id = $RunId
-    owner_pid = $(if ($effectiveOwnerPid -gt 0) { $effectiveOwnerPid } else { $null })
+    owner_pid = $ownerVal
     started_at = $now.ToString('o')
     heartbeat_at = $now.ToString('o')
     expires_at = $now.AddHours($TtlHours).ToString('o')
+    receipt_hmac_key_id = [string]$hmac.KeyId
+    receipt_hmac_key_b64 = [string]$hmac.KeyB64
   }
   $temp = Join-Path $root ('.lease-' + [guid]::NewGuid().ToString('n') + '.json')
   try {
     [IO.File]::WriteAllText($temp, ($record | ConvertTo-Json -Depth 4), (New-Object Text.UTF8Encoding($false)))
+    # Owner-restricted ACL BEFORE atomic move; fail closed if ACL cannot be set.
+    Set-FleetLeaseFileAcl -Path $temp
     [IO.File]::Move($temp, $path)
   }
-  finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force } }
+  finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue } }
+  # Path only — secret must never appear on stdout (exactly one line for callers).
   Write-Output $path
 }
 finally {

@@ -21,3 +21,85 @@ function Test-FleetLeaseReclaimable($lease, [datetimeoffset]$now, [int]$staleHou
   if ($null -ne $hb -and $hb.AddHours($staleHours) -le $now) { return $true }
   return $false
 }
+
+# 32-byte CSPRNG secret + independent 16-byte key id (32 lowercase hex). Never log/return secret.
+# Returns a single PSCustomObject (not a bare hashtable) so pipeline assignment never
+# enumerates DictionaryEntry rows into the caller's stdout capture.
+function New-FleetRunLeaseHmacMaterial {
+  $keyBytes = New-Object byte[] 32
+  $idBytes = New-Object byte[] 16
+  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+  try {
+    $rng.GetBytes($keyBytes)
+    $rng.GetBytes($idBytes)
+  }
+  finally { $rng.Dispose() }
+  $sb = New-Object System.Text.StringBuilder 32
+  foreach ($b in $idBytes) { [void]$sb.Append($b.ToString('x2')) }
+  # PSCustomObject (not bare hashtable) so assignment never enumerates DictionaryEntry.
+  [pscustomobject]@{
+    KeyId = $sb.ToString()
+    KeyB64 = [Convert]::ToBase64String($keyBytes)
+  }
+}
+
+# Owner-only ACL on lease file. Fail closed — no world-readable fallback.
+# No pipeline output (Enter/Renew stdout must stay a single lease path line).
+function Set-FleetLeaseFileAcl([string]$Path) {
+  if ([string]::IsNullOrEmpty($Path)) { throw 'Fleet run lease ACL path is required.' }
+  try {
+    $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+    if ($null -eq $user) { throw 'current user SID is null' }
+    $acl = New-Object System.Security.AccessControl.FileSecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $rights = [System.Security.AccessControl.FileSystemRights]::FullControl
+    $allow = [System.Security.AccessControl.AccessControlType]::Allow
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($user, $rights, $allow)
+    [void]$acl.AddAccessRule($rule)
+    [System.IO.File]::SetAccessControl($Path, $acl)
+  }
+  catch {
+    throw ('Fleet run lease ACL could not be established (fail closed): ' + $_.Exception.Message)
+  }
+}
+
+# Load ACTIVE lease key by externally-supplied RunId. Never take run_id from a receipt.
+function Get-FleetRunLeaseKey {
+  param(
+    [Parameter(Mandatory = $true)][ValidatePattern('^[A-Za-z0-9._-]+$')][string]$RunId,
+    [ValidateRange(1, 24)][int]$StaleHeartbeatHours = 2
+  )
+  $path = "$env:USERPROFILE\.codex\fleet\run-leases\$RunId.json"
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Fleet run lease not found for key load: $RunId"
+  }
+  try { $lease = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw "Fleet run lease unparseable for key load: $path" }
+
+  $schema = [string]$lease.schema_version
+  if ($schema -ne '2') {
+    throw "Fleet run lease schema unsupported for key load: $schema"
+  }
+  if ([string]$lease.run_id -ne $RunId) {
+    throw 'Fleet run lease identity mismatch for key load.'
+  }
+  $now = [datetimeoffset]::Now
+  if (Test-FleetLeaseReclaimable $lease $now $StaleHeartbeatHours) {
+    throw "Fleet run lease is reclaimable (expired/stale/dead-owner); key load refused: $RunId"
+  }
+
+  $keyB64 = [string]$lease.receipt_hmac_key_b64
+  if ([string]::IsNullOrEmpty($keyB64)) {
+    throw 'Fleet run lease missing receipt_hmac_key_b64.'
+  }
+  try { $keyBytes = [Convert]::FromBase64String($keyB64) }
+  catch { throw 'Fleet run lease receipt_hmac_key_b64 is not valid base64.' }
+  if ($keyBytes.Length -ne 32) {
+    throw ("Fleet run lease receipt_hmac_key_b64 is not 32 bytes (got " + $keyBytes.Length + ').')
+  }
+  $keyId = [string]$lease.receipt_hmac_key_id
+  if ($keyId -notmatch '^[0-9a-f]{32}$') {
+    throw 'Fleet run lease receipt_hmac_key_id is invalid (need 32 lowercase hex).'
+  }
+  return @{ KeyId = $keyId; KeyBytes = $keyBytes }
+}

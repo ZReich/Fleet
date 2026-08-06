@@ -103,15 +103,31 @@ Fable/Opus/four-voice drift.
   the Agent tool (`model: fable` — diverge high, merge high). Six-seat blind diverge,
   Fable merge, FULL blind attack, Sol xhigh ratify. All PLAN lanes are free-form
   markdown (harness law).
-- merge-readiness stages dispatch as model-first background wrapper lanes; conditional
-  audits launch concurrently in one message. Canonical contract:
-  `references/merge-readiness.md` (do not restate stage graph/receipt schema here).
-- Claude root runs canonical `scripts/Assert-FleetMergeReadiness.ps1` and quotes its
-  exact `merge-readiness: ...` line; root NEVER substitutes its own review for a
-  missing receipt.
+- `/fleet merge-readiness <task>`: existing `/fleet` command already forwards
+  `$ARGUMENTS` — no new command file. Mode = named-stage merge-readiness contract;
+  stages dispatch as model-first background wrapper lanes; conditional audits launch
+  concurrently in one message. Canonical stage graph + receipts:
+  [references/merge-readiness.md](../../references/merge-readiness.md) (do not restate
+  schema here). Review-integrity + security identity:
+  [references/review-integrity.md](../../references/review-integrity.md).
+- Signed receipts (atomic cutover): review/merge receipts are **v2 HMAC-SHA256**.
+  Gates require `-RunId` and verify signatures against the run lease key before
+  trusting any field; no unsigned-compat (v1 rejected). Adversarial gate also needs
+  `-ReceiptDir` + `-PacketManifest`. Merge reducer needs `-ExpectedPacketSha256`.
+  Signing shim `Invoke-FleetSignedLane.ps1` derives model identity. Lease holds the
+  per-run HMAC key (never repo/receipt/stdout). Algorithm:
+  [references/review-integrity.md](../../references/review-integrity.md) (canonical).
+- Every merge-readiness run REQUIRES the full gate sequence before the reducer:
+  review-integrity (`-RunId -SpanLedger -BaseManifest`) -> effective lane-span ->
+  adversarial-review (`-RunId -ReceiptDir -PacketManifest`, security identity) ->
+  reducer (`-RunId -ExpectedPacketSha256`). Claude root runs each canonical script
+  and quotes its line (`review-integrity: ...`, `lane-spans: ...`, adversarial
+  summary, then `merge-readiness: ...`); root NEVER substitutes its own review for a
+  missing receipt. See merge-readiness.md How to run / stage graph.
 - Fallback launches are NEW labeled wrapper invocations with independent receipts;
   never hidden inside an Agent or Bash transport. Routing provenance:
-  `references/routing-evidence.md`.
+  `references/routing-evidence.md`. Hosted refusal failover policy:
+  [references/review-integrity.md](../../references/review-integrity.md).
 
 ## Canonical External Lanes
 
@@ -206,8 +222,9 @@ Read `$env:USERPROFILE/.codex/fleet/cli-update-status.json` before dispatch.
 The daily audit checks Grok, Claude, Pi, Antigravity, and Kimi Code; refresh it read-only when
 missing, invalid, schema-incompatible, future-timestamped, or older than 24 hours.
 Before dispatch, acquire a shared Fleet run lease with the canonical
-`Enter-FleetRunLease.ps1`, renew it at every phase transition and at least hourly,
-and release it in final cleanup. Never replace a CLI
+`Enter-FleetRunLease.ps1` (lease carries per-run receipt HMAC key; never log it),
+renew it at every phase transition and at least hourly, and release it in final
+cleanup after gates. Never replace a CLI
 executable in place or enable background updates. Validate side-by-side candidates;
 promotion shares the lease mutex and can move the pin only between Fleet runs. Record Claude npm `stable`, `latest`,
 and `next` separately. Default target is non-prerelease `latest` after proof; `stable`

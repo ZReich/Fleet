@@ -32,9 +32,19 @@ timeouts.
    infra, cross-repo or public API contract, unresolved design judgment, unknown blast
    radius, explicit user request, or any unresolved HIGH/BLOCK escalated from a lower
    tier. `review_risk=hard` forces FULL.
+**sensitive-review trigger** (orthogonal to the ladder; applies when matched, even if
+FULL already won via security-surface): user labels the work security-sensitive /
+vuln-audit / exploit-path review, Sol judges open-weights security voices are
+required, **or** the selected FULL path is a security surface
+(auth/authz/secret/privacy/payment/crypto). Forces `selected_tier=FULL` and writes
+`review_profile: security-sensitive` as a single machine-readable line in the frozen
+`locked-plan.md`. Otherwise `review_profile: general`. Security identity + hosted-
+refusal failover: [review-integrity.md](review-integrity.md).
 Tier-selection output must include a one-line `k3_considered: yes|no — <why>` record
 (design-proposal, DesignWorkspace, research-swarm, long-horizon, PLAN diverge, or
 FULL data seat). Skipping Kimi is fine; skipping it silently is not.
+Locked plan always carries exactly one of:
+`review_profile: general` | `review_profile: security-sensitive`.
 
 0. **PLAN** (pre-build, orthogonal to the build tiers) — explicit `fleet plan`, or Sol
    judges the project big/ambiguous/long-horizon enough that a missed screen, control,

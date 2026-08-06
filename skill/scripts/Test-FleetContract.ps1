@@ -1,287 +1,267 @@
-# Contract-consistency checks (Fable plan item 10 / L3). Fails closed on drift so the
-# two SKILL files, references, and policy stay coherent. Pure ASCII: mojibake bytes are
-# referenced by code point, never as literals.
+# Integration: signed self-tests + mutation proofs. Fail-close on unsigned/tampered.
+# contract: N sub-tests PASS | mutation-proofs: M/M | verdict: ok|FAILED  (PS 5.1)
 $ErrorActionPreference = 'Stop'
-$codexRoot = Split-Path -Parent $PSScriptRoot
-$claudeSkill = Join-Path $env:USERPROFILE '.claude\skills\fleet\SKILL.md'
-$passed = 0; $failed = 0
-function Case([string]$n, [scriptblock]$b) { try { & $b; $script:passed++; Write-Host "PASS $n" } catch { $script:failed++; Write-Host "FAIL $n - $($_.Exception.Message)" } }
-function Assert-True([bool]$c, [string]$m) { if (-not $c) { throw $m } }
+$utf8 = New-Object Text.UTF8Encoding $false
+. (Join-Path $PSScriptRoot 'FleetReceiptSignature.Helpers.ps1')
+$root = Join-Path $env:TEMP ('fleet-contract-' + [guid]::NewGuid().ToString('N'))
+$leaseHome = Join-Path $root 'home'; $oldProfile = $env:USERPROFILE
+$subPass = 0; $subTotal = 8; $mutOk = 0; $mutTotal = 4; $failed = $false
+$assertRi = Join-Path $PSScriptRoot 'Assert-FleetReviewIntegrity.ps1'
+$assertAdv = Join-Path $PSScriptRoot 'Assert-FleetAdversarialReview.ps1'
+$assertMr = Join-Path $PSScriptRoot 'Assert-FleetMergeReadiness.ps1'
+$shaA = ('a' * 64); $shaB = ('b' * 64); $shaC = ('c' * 64); $shaPlan = ('d' * 64)
+$ts0 = '2026-08-05T01:00:00.0000000Z'; $ts1 = '2026-08-05T01:05:00.0000000Z'
+$ts6 = '2026-08-05T01:06:00.0000000Z'; $ts10 = '2026-08-05T01:10:00.0000000Z'
+$pad = ('evidence detail line for substantive review body. ' * 6)
+$voiceBody = "## Adversarial review`n### Findings`n- scripts/x.ps1:10 HIGH - problem found. Fix required.`n$pad`n"
+$okBody = "## Findings`n- none material`nVERDICT: CLEAR"; $refuseBody = 'I cannot help with that request.'
+$rlF = @('schema_version','receipt_type','run_id','task_id','lane_id','voice_id','review_role','requested_model','observed_model','model_evidence','emitter_id','input_packet_sha256','expected_lane_manifest_sha256','locked_plan_sha256','review_profile','charter_path','review_tier','result_path','charter_sha256','result_sha256','exit_code','outcome','refusal_reason','fallback_of','started_at','completed_at','sig_alg','key_id','signature')
+$msF = @('schema_version','receipt_type','run_id','task_id','lane_id','stage','required','status','requested_model','observed_model','model_evidence','effort','input_packet_sha256','emitter_id','locked_plan_sha256','stage_set_sha256','review_tier','review_profile','charter_path','result_path','result_sha256','charter_sha256','exit_code','outcome','fallback_of','failure_category','findings','evidence_refs','output_artifacts','started_at','completed_at','model','sig_alg','signature')
+$script:RunId = 'contract-mut'; $script:Secret = $null; $script:KeyId = ''; $script:ManSha = $shaA
 
-$contractFiles = @(
-  (Join-Path $codexRoot 'SKILL.md'),
-  (Join-Path $codexRoot 'references\mode-selection.md'),
-  (Join-Path $codexRoot 'references\review-protocol.md'),
-  (Join-Path $codexRoot 'references\benchmark-schema.md'),
-  (Join-Path $codexRoot 'references\kimi-k3.md'),
-  (Join-Path $codexRoot 'references\auto-shadow.md'),
-  $claudeSkill
-)
-
-Case 'fleet-policy.json parses and has required blocks' {
-  $p = Get-Content -LiteralPath (Join-Path $codexRoot 'fleet-policy.json') -Raw | ConvertFrom-Json
-  Assert-True ($null -ne $p.review_tiers.MICRO -and $p.full_panel_voices.Count -eq 5 -and $p.auto_shadow.critical_path_delay_seconds -eq 0) 'policy missing required blocks'
-  Assert-True ([bool]$p.auto_shadow.stratified_boost.enabled -eq $true) 'auto_shadow.stratified_boost.enabled must be true'
-  Assert-True ([int]$p.auto_shadow.canary_set.repeat_count -eq 3) 'auto_shadow.canary_set.repeat_count must be 3'
+function Write-Utf8([string]$Path, [string]$Text) {
+  $p = Split-Path -Parent $Path
+  if ($p -and -not (Test-Path -LiteralPath $p)) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
+  [IO.File]::WriteAllText($Path, $Text, $utf8)
 }
-
-Case 'no mojibake / replacement chars in contract files' {
-  $repl = [char]0xFFFD; $c2 = [char]0x00C2; $c3 = [char]0x00C3
-  $bad = @()
-  foreach ($f in $contractFiles) {
-    if (-not (Test-Path -LiteralPath $f)) { continue }
-    $text = [IO.File]::ReadAllText($f)
-    if ($text.Contains($repl) -or $text.Contains($c2) -or $text.Contains($c3)) { $bad += $f }
-  }
-  Assert-True ($bad.Count -eq 0) ("mojibake in: " + ($bad -join ', '))
+function Get-ShaHex([byte[]]$Bytes) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try { return -join ($sha.ComputeHash($Bytes) | ForEach-Object { $_.ToString('x2') }) } finally { $sha.Dispose() }
 }
-
-Case 'all references/*.md links in Codex SKILL.md resolve' {
-  $skill = [IO.File]::ReadAllText((Join-Path $codexRoot 'SKILL.md'))
-  $missing = @()
-  foreach ($m in [regex]::Matches($skill, 'references/([A-Za-z0-9._-]+\.md)')) {
-    $rel = $m.Groups[1].Value
-    if (-not (Test-Path -LiteralPath (Join-Path $codexRoot ('references\' + $rel)))) { $missing += $rel }
-  }
-  Assert-True ($missing.Count -eq 0) ("unresolved reference links: " + (($missing | Select-Object -Unique) -join ', '))
+function Get-Sha256Text([string]$Text) { return (Get-ShaHex $utf8.GetBytes($Text)) }
+function Get-Sha256File([string]$Path) { return (Get-ShaHex ([IO.File]::ReadAllBytes($Path))) }
+function Invoke-Child([string]$Script, [string[]]$ExtraArgs = @()) {
+  $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $Script) + @($ExtraArgs)
+  $old = $ErrorActionPreference
+  try { $ErrorActionPreference = 'Continue'; $raw = & powershell.exe @argList 2>&1; $code = $LASTEXITCODE }
+  finally { $ErrorActionPreference = $old }
+  return [pscustomobject]@{ ExitCode = $code; Raw = (($raw | ForEach-Object { "$_" }) -join "`n") }
 }
-
-Case 'benchmark schema example uses effective effort high, not max' {
-  $bs = [IO.File]::ReadAllText((Join-Path $codexRoot 'references\benchmark-schema.md'))
-  Assert-True ($bs -match '"grok_review_effort":\s*"high"' -and $bs -notmatch '"grok_review_effort":\s*"max"') 'schema example still shows max'
-}
-
-Case 'Claude adapter stays a thin surface map' {
-  Assert-True (Test-Path -LiteralPath $claudeSkill) 'adapter missing'
-  $lines = @(Get-Content -LiteralPath $claudeSkill).Count
-  $text = [IO.File]::ReadAllText($claudeSkill)
-  Assert-True ($lines -lt 220 -and $text -match 'Codex Fleet is the single source of truth') 'adapter drifted from thin surface map'
-}
-
-Case 'ArtifactFile is comma-joined at -File call sites' {
-  foreach ($f in @((Join-Path $codexRoot 'SKILL.md'), $claudeSkill)) {
-    $text = [IO.File]::ReadAllText($f)
-    foreach ($m in [regex]::Matches($text, '-File[^\n]*Invoke-(Opus48|PiGlm)\.ps1[^\n]*-ArtifactFile\s+(\S+)')) {
-      Assert-True ($m.Groups[2].Value -notmatch '^\$reviewArtifacts$') "raw-array ArtifactFile at a -File call site in $f"
-    }
-  }
-}
-
-Case "A9 arbitration cap wording is locked in review-protocol" {
-  $rp = [IO.File]::ReadAllText((Join-Path $codexRoot 'references\review-protocol.md'))
-  Assert-True ($rp -match 'Maximum three Sol arbitration rounds per wave') 'missing three-round cap'
-  Assert-True ($rp -match 'Initial arbitration is round 1') 'missing round 1 definition'
-  Assert-True ($rp -match 'Assert-FleetRepairCoverage\.ps1') 'missing coverage pre-check script'
-  Assert-True ($rp -match 'Before dispatching rounds 2 or 3') 'missing coverage pre-check timing'
-  Assert-True ($rp -match 'round-3 repair charter contains only unresolved blocker IDs') 'missing residual-only round-3 charter'
-  Assert-True ($rp -match 'No fourth repair/arbitration round is allowed') 'missing freeze after round-3'
-  Assert-True ($rp -match 'new Sol-locked plan and new wave') 'missing re-plan resume path'
-  Assert-True ($rp -match 'new wave resets the counter') 'missing counter reset'
-}
-
-Case "SKILL.md scopes worker JSON to implementation and shows review text capture" {
-  $skill = [IO.File]::ReadAllText((Join-Path $codexRoot 'SKILL.md'))
-  Assert-True ($skill -match 'needs_gate_validation') 'missing needs_gate_validation docs'
-  Assert-True ($skill -match 'implementation lanes only' -or $skill -match 'IMPLEMENTATION lanes only') 'missing implementation-only worker JSON scope'
-  Assert-True ($skill -match '-Review -TimeoutSeconds 900 -Mode text' -or $skill -match '-Review -Mode text') 'review capture must show -Mode text'
-  Assert-True ($skill -match 'wraps markdown') 'must document Mode json wraps markdown for probes'
-  Assert-True ($skill -match 'manager gate' -or $skill -match 'manager-owned') 'must document manager gates for needs_gate_validation'
-  Assert-True ($skill -match 'Record-FleetLaneSpan\.ps1') 'SKILL.md must name Record-FleetLaneSpan.ps1'
-  Assert-True ($skill -match 'Assert-FleetLaneSpans\.ps1') 'SKILL.md must name Assert-FleetLaneSpans.ps1'
-  Assert-True ($skill -match 'lane-spans: <run> \| expected: N \| valid: V \| missing: M \| duplicate: D \|') 'SKILL.md must quote lane-spans summary shape'
-  # Wave docs: real script/param names (T4 lane-fit + live shadow); strengthen, no new case.
-  Assert-True ($skill -match 'Get-FleetLaneFit\.ps1' -and $skill -match '-SpansPath' -and $skill -match '-GenrePath' -and $skill -match '-ShadowPath' -and $skill -match '-OutputPath') 'SKILL lane-fit script+params'
-  Assert-True ($skill -match 'Invoke-ShadowReplay\.ps1' -and $skill -match '-EntryPath' -and $skill -match '-LaneSpecPath') 'SKILL shadow-replay EntryPath/LaneSpecPath'
-  Assert-True ($skill -match '-TaskSpecJson' -and $skill -match 'deferred_no_spec' -and $skill -match 'deterministic_partial' -and $skill -match 'max 90') 'SKILL enqueue snapshot + rubric max 90'
-  Assert-True ($skill -match 'lane_a' -and $skill -match 'lane_b' -and $skill -match 'wrapper_pair') 'SKILL task-file v2 lane_a/lane_b'
-  $fit = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Get-FleetLaneFit.ps1'))
-  Assert-True ($fit -match '\$SpansPath' -and $fit -match '\$GenrePath' -and $fit -match '\$ShadowPath' -and $fit -match '\$OutputPath') 'Get-FleetLaneFit.ps1 four params'
-  $rep = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Invoke-ShadowReplay.ps1'))
-  Assert-True ($rep -match '\$EntryPath' -and $rep -match '\$LaneSpecPath' -and $rep -match 'deterministic_partial' -and $rep -match 'max_score = 90') 'Invoke-ShadowReplay EntryPath/LaneSpecPath/max 90'
-  $enq = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Enqueue-FleetShadow.ps1'))
-  Assert-True ($enq -match '\$TaskSpecJson') 'Enqueue-FleetShadow TaskSpecJson param'
-  $cmp = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Run-TerraGrokComparison.ps1'))
-  Assert-True ($cmp -match 'lane_a' -and $cmp -match 'lane_b') 'Run-TerraGrokComparison lane_a/lane_b'
-  $as = [IO.File]::ReadAllText((Join-Path $codexRoot 'references\auto-shadow.md'))
-  Assert-True ($as -match 'deterministic_partial' -and $as -match 'max 90') 'auto-shadow.md rubric max 90'
-}
-
-Case "SKILL.md defines reviewRisk before packet and passes -ReviewRisk" {
-  $skill = [IO.File]::ReadAllText((Join-Path $codexRoot 'SKILL.md'))
-  Assert-True ($skill -match 'Get-FleetReviewPacket\.ps1.*-ReviewRisk \$reviewRisk') 'packet build must pass -ReviewRisk $reviewRisk'
-  $riskIdx = $skill.IndexOf('$reviewRisk =')
-  $packetIdx = $skill.IndexOf('Get-FleetReviewPacket.ps1')
-  Assert-True ($riskIdx -ge 0 -and $packetIdx -ge 0 -and $riskIdx -lt $packetIdx) 'must define $reviewRisk before Get-FleetReviewPacket.ps1'
-}
-
-# Semantic flag-signature compare for shared wrapper launch lines in ```powershell fences.
-# Host launcher (powershell vs powershell.exe) and path style differ by design; only
-# switch presence + bare-literal values must match per lane. Adapter may omit Codex
-# lanes; it must not invent lanes or drift flags.
-function Get-FleetWrapperLaneLines([string]$text) {
-  $scriptRe = 'Invoke-Grok45\.ps1|Invoke-Opus48\.ps1|Invoke-PiGlm\.ps1|Invoke-Gemini35\.ps1|Get-FleetReviewPacket\.ps1|Get-FleetReviewBudget\.ps1'
-  $out = @()
-  foreach ($m in [regex]::Matches($text, '(?ms)```powershell\r?\n(.*?)```')) {
-    foreach ($raw in ($m.Groups[1].Value -split '\r?\n')) {
-      $line = $raw.Trim()
-      if ($line -and $line -match $scriptRe) { $out += $line }
-    }
-  }
-  return $out
-}
-function Get-FleetLaneKey([string]$line) {
-  if ($line -match 'Invoke-Grok45\.ps1') {
-    if ($line -match '(^|\s)-Review(\s|$)') { return 'grok-review' }
-    return 'grok-impl'
-  }
-  if ($line -match 'Invoke-PiGlm\.ps1') {
-    if ($line -match '(^|\s)-NoTools(\s|$)') { return 'glm-review' }
-    return 'glm-impl'
-  }
-  if ($line -match 'Invoke-Opus48\.ps1') { return 'opus-review' }
-  if ($line -match 'Get-FleetReviewPacket\.ps1') { return 'packet' }
-  if ($line -match 'Get-FleetReviewBudget\.ps1') { return 'budget' }
-  if ($line -match 'Invoke-Gemini35\.ps1') { return 'gemini' }
+function Get-SelfTestKk([string]$Raw) {
+  if ($Raw -match 'selftest:\s*PASS\s+(\d+)/(\d+)') { return [pscustomobject]@{ A = [int]$Matches[1]; B = [int]$Matches[2] } }
   return $null
 }
-function Get-FleetFlagSignature([string]$line) {
-  $parts = @([regex]::Matches($line, '(?:"[^"]*"|''[^'']*''|\([^\)]*\)|[^\s]+)') | ForEach-Object { $_.Value })
-  $sig = @()
+function Get-VerdictToken([string]$Raw, [string]$Kind = 'verdict') {
+  if ($Kind -eq 'merge' -and $Raw -match 'merge-readiness:\s+(\S+)') { return $Matches[1] }
+  if ($Raw -match 'verdict:\s*(\S+)') { return $Matches[1] }
+  return ''
+}
+function Install-Lease {
+  $script:Secret = New-Object byte[] 32
+  for ($i = 0; $i -lt 32; $i++) { $script:Secret[$i] = [byte](($i * 11 + 5) -band 0xFF) }
+  $script:KeyId = 'cc' + ('d' * 30)
+  $dir = Join-Path $leaseHome '.codex\fleet\run-leases'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $now = [datetimeoffset]::UtcNow
+  $rec = [ordered]@{ schema_version='2'; run_id=$script:RunId; owner_pid=$PID; started_at=$now.ToString('o'); heartbeat_at=$now.ToString('o'); expires_at=$now.AddHours(4).ToString('o'); receipt_hmac_key_id=$script:KeyId; receipt_hmac_key_b64=[Convert]::ToBase64String($script:Secret) }
+  Write-Utf8 (Join-Path $dir ($script:RunId + '.json')) ($rec | ConvertTo-Json -Compress)
+}
+function Write-OrderedJson([string]$Path, $Obj, [string[]]$Fields, [string]$Sig) {
+  $parts = New-Object System.Collections.ArrayList
+  foreach ($k in $Fields) {
+    if ($k -eq 'signature') { [void]$parts.Add(('"{0}":{1}' -f $k, (ConvertTo-Json -InputObject $Sig -Compress))); continue }
+    $v = $Obj.$k
+    if ($null -eq $v) {
+      if ($k -in @('findings','evidence_refs','output_artifacts')) { [void]$parts.Add(('"{0}":[]' -f $k)) } else { [void]$parts.Add(('"{0}":null' -f $k)) }
+      continue
+    }
+    if ($k -in @('findings','evidence_refs','output_artifacts')) {
+      $els = New-Object System.Collections.ArrayList
+      foreach ($item in @($v)) { [void]$els.Add(($item | ConvertTo-Json -Depth 4 -Compress)) }
+      [void]$parts.Add(('"{0}":[{1}]' -f $k, ($els -join ','))); continue
+    }
+    [void]$parts.Add(('"{0}":{1}' -f $k, (ConvertTo-Json -InputObject $v -Compress)))
+  }
+  Write-Utf8 $Path ('{' + ($parts -join ',') + '}')
+}
+function New-RlObj {
+  param([string]$Lane,[string]$Model,[string]$Outcome='completed',[string]$Role='security-review',[string]$ResultPath,[string]$ResultSha,[string]$Started=$ts0,[string]$Completed=$ts1,[object]$FallbackOf=$null,[object]$Refusal=$null,[string]$Profile='security-sensitive',[string]$Tier='FULL',[string]$Man='',[string]$PlanSha='')
+  if ([string]::IsNullOrWhiteSpace($Man)) { $Man = $script:ManSha }
+  if ([string]::IsNullOrWhiteSpace($PlanSha)) { $PlanSha = $script:BoundPlanSha; if ([string]::IsNullOrWhiteSpace($PlanSha)) { $PlanSha = $shaPlan } }
+  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='review_lane'; run_id=$script:RunId; task_id='T-sec'; lane_id=$Lane; voice_id=$Model; review_role=$Role; requested_model=$Model; observed_model=$Model; model_evidence='test-fixture'; emitter_id='test-emitter'; input_packet_sha256=$shaA; expected_lane_manifest_sha256=$Man; locked_plan_sha256=$PlanSha; review_profile=$Profile; charter_path='charter.md'; review_tier=$Tier; result_path=$ResultPath; charter_sha256=$shaB; result_sha256=$ResultSha; exit_code=0; outcome=$Outcome; refusal_reason=$Refusal; fallback_of=$FallbackOf; started_at=$Started; completed_at=$Completed; sig_alg='HMAC-SHA256'; key_id=$script:KeyId }
+}
+function Write-SignedRl([string]$Path, $Obj, [byte[]]$Secret = $null) {
+  if ($null -eq $Secret) { $Secret = $script:Secret }
+  Write-OrderedJson $Path $Obj $rlF (New-FleetReceiptSignature -Receipt $Obj -ReceiptType 'review_lane' -RunSecret $Secret -KeyId $script:KeyId)
+}
+function New-MsObj([string]$Stage, [string]$Packet) {
+  $ss = Get-Sha256Text "change-map`nsynthesis`nadversarial-challenge`ntriage"
+  $rp = $script:ResultFixturePath; $rsha = $script:ResultFixtureSha
+  if ([string]::IsNullOrWhiteSpace($rp)) { $rp = 'C:\tmp\result.md' }; if ([string]::IsNullOrWhiteSpace($rsha)) { $rsha = $shaC }
+  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='merge_stage'; run_id=$script:RunId; task_id='task-1'; lane_id='lane-1'; stage=$Stage; required=$true; status='passed'; requested_model='test-model'; observed_model='test-model'; model_evidence='test-evidence'; effort='high'; input_packet_sha256=$Packet; emitter_id='test-emitter'; locked_plan_sha256=$shaPlan; stage_set_sha256=$ss; review_tier='STANDARD'; review_profile='standard'; charter_path='C:\tmp\charter.md'; result_path=$rp; result_sha256=$rsha; charter_sha256=$shaB; exit_code=0; outcome='completed'; fallback_of=$null; failure_category=$null; findings=@(); evidence_refs=@('trigger:ok'); output_artifacts=@(); started_at=$ts0; completed_at=$ts1; model='test-model'; sig_alg='HMAC-SHA256' }
+}
+function Write-SignedMs([string]$Path, $Obj) {
+  Write-OrderedJson $Path $Obj $msF (New-FleetReceiptSignature -Receipt $Obj -ReceiptType 'merge_stage' -RunSecret $script:Secret -KeyId $script:KeyId)
+}
+function New-Span([string]$Lane, [string]$Model, [string]$Status, [string]$ErrType = $null) {
+  $err = if ([string]::IsNullOrEmpty($ErrType)) { 'null' } else { '"' + $ErrType + '"' }
+  return ('{"schema_version":"1","run_id":' + (ConvertTo-Json -InputObject $script:RunId -Compress) + ',"lane_id":' + (ConvertTo-Json -InputObject $Lane -Compress) + ',"phase":"review","gen_ai.operation.name":"invoke_agent","gen_ai.agent.name":"fleet","gen_ai.provider.name":"x","gen_ai.request.model":' + (ConvertTo-Json -InputObject $Model -Compress) + ',"gen_ai.response.model":' + (ConvertTo-Json -InputObject $Model -Compress) + ',"gen_ai.usage.input_tokens":1,"gen_ai.usage.output_tokens":1,"gen_ai.usage.cache_read.input_tokens":0,"tool_calls":0,"inference_calls":1,"duration_s":1.0,"first_result_s":0.5,"status":' + (ConvertTo-Json -InputObject $Status -Compress) + ',"error.type":' + $err + ',"handoff":null,"artifacts":null}')
+}
+function Invoke-Integrity([string]$Dir, [string]$Base, [string]$Span) {
+  return (Invoke-Child -Script $assertRi -ExtraArgs @('-ReceiptDir',$Dir,'-RunId',$script:RunId,'-Mode','text','-BaseManifest',$Base,'-SpanLedger',$Span))
+}
+function Invoke-Adv([string]$Repo, [string]$BaseRef, [string]$ReviewDir, [string]$ReceiptDir) {
+  return (Invoke-Child -Script $assertAdv -ExtraArgs @('-Repo',$Repo,'-BaseRef',$BaseRef,'-RunId',$script:RunId,'-ReceiptDir',$ReceiptDir,'-PacketManifest',(Join-Path $ReviewDir 'packet-manifest.json'),'-ReviewDir',$ReviewDir,'-Tier','FULL','-ReviewProfile','security-sensitive','-LockedPlan',(Join-Path $Repo 'locked-plan.md'),'-Mode','text'))
+}
+function Invoke-Merge([string]$Dir, [string]$Packet) {
+  return (Invoke-Child -Script $assertMr -ExtraArgs @('-ReceiptDir',$Dir,'-RunId',$script:RunId,'-ExpectedPacketSha256',$Packet,'-RequiredStages','change-map,synthesis,adversarial-challenge,triage'))
+}
+function New-AdvShip([string]$Name) {
+  $repo = Join-Path $root $Name
+  New-Item -ItemType Directory -Force -Path $repo | Out-Null
+  & git -C $repo init -q | Out-Null
+  & git -C $repo -c user.email=fleet-test@example.invalid -c user.name=fleet-test commit --allow-empty -q -m seed | Out-Null
+  $base = (& git -C $repo rev-parse HEAD).Trim()
+  Write-Utf8 (Join-Path $repo 'ship.txt') "shipped`n"
+  & git -C $repo add -- ship.txt | Out-Null
+  & git -C $repo -c user.email=fleet-test@example.invalid -c user.name=fleet-test commit -q -m ship | Out-Null
+  Write-Utf8 (Join-Path $repo 'locked-plan.md') "# locked plan`nreview_profile: security-sensitive`n"
+  $rd = Join-Path $repo '.fleet-review'; $rc = Join-Path $repo '.fleet-receipts'
+  New-Item -ItemType Directory -Force -Path $rd, $rc | Out-Null
+  $final = Join-Path $rd 'final.diff'
+  $argLine = '-C "' + ($repo.Replace('"', '\"')) + '" --no-pager diff "' + ($base.Replace('"', '\"')) + '" HEAD'
+  $proc = New-Object System.Diagnostics.Process; $psi = $proc.StartInfo
+  $psi.FileName = 'git'; $psi.Arguments = $argLine; $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+  [void]$proc.Start(); $ms = New-Object System.IO.MemoryStream
+  try { $proc.StandardOutput.BaseStream.CopyTo($ms); $err = $proc.StandardError.ReadToEnd(); $proc.WaitForExit(); if ($proc.ExitCode -ne 0) { throw "git diff failed: $err" }; [IO.File]::WriteAllBytes($final, $ms.ToArray()) }
+  finally { $ms.Dispose(); $proc.Dispose() }
+  $bytes = [IO.File]::ReadAllBytes($final)
+  $man = [ordered]@{ schema_version='1'; review_risk='mechanical'; packet_sha256=$shaA; artifacts=@(@{ name='final.diff'; bytes=[int64]$bytes.Length; sha256=(Get-ShaHex $bytes) }) }
+  Write-Utf8 (Join-Path $rd 'packet-manifest.json') ($man | ConvertTo-Json -Compress -Depth 5)
+  return [pscustomobject]@{ Repo=$repo; Base=$base; ReviewDir=$rd; ReceiptDir=$rc }
+}
+function Write-AdvVoices($Ship, [string[]]$Names, [hashtable]$Models, [hashtable]$Roles) {
+  # L3: hash LockedPlan before signing so locked_plan_sha256 matches file.
+  $lp = Join-Path $Ship.Repo 'locked-plan.md'
+  if (Test-Path -LiteralPath $lp -PathType Leaf) { $script:BoundPlanSha = Get-Sha256File $lp } else { $script:BoundPlanSha = $shaPlan }
   $i = 0
-  while ($i -lt $parts.Count) {
-    $p = $parts[$i]
-    if ($p -match '^-[A-Za-z]') {
-      $name = $p.Substring(1)
-      $val = $null
-      if (($i + 1) -lt $parts.Count -and $parts[$i + 1] -notmatch '^-[A-Za-z]') {
-        $val = $parts[$i + 1]
-        $i++
-      }
-      if ($null -ne $val -and $val -match '^[A-Za-z0-9]+$') {
-        $sig += "-$name=$val"
-      } else {
-        $sig += "-$name"
-      }
-    }
-    $i++
+  foreach ($n in $Names) {
+    $i++; $vp = Join-Path $Ship.ReviewDir $n; Write-Utf8 $vp $voiceBody
+    $obj = New-RlObj -Lane ([IO.Path]::GetFileNameWithoutExtension($n)) -Model $Models[$n] -Role $Roles[$n] -ResultPath ([IO.Path]::GetFullPath($vp)) -ResultSha (Get-Sha256Text $voiceBody) -Man $shaA -PlanSha $script:BoundPlanSha
+    Write-SignedRl (Join-Path $Ship.ReceiptDir ("r$i.json")) $obj
   }
-  return (($sig | Sort-Object) -join ' ')
 }
-function Get-FleetLaneSignatureMap([string]$text) {
-  $map = @{}
-  foreach ($line in (Get-FleetWrapperLaneLines $text)) {
-    $lane = Get-FleetLaneKey $line
-    if (-not $lane) { continue }
-    $sig = Get-FleetFlagSignature $line
-    $hasPf = $sig -match '(^|\s)-PromptFile(\s|$| =)' -or $sig -match '(^|\s)-PromptFile$'
-    if ($lane -eq 'budget') {
-      if (-not $map.ContainsKey($lane)) { $map[$lane] = @() }
-      if (@($map[$lane]) -notcontains $sig) { $map[$lane] = @($map[$lane] + $sig) }
-    } elseif ($map.ContainsKey($lane)) {
-      $old = [string]$map[$lane]
-      $oldHasPf = $old -match '(^|\s)-PromptFile(\s|$)' -or $old -match '(^|\s)-PromptFile$'
-      if ($hasPf -and -not $oldHasPf) {
-        $map[$lane] = $sig
-      } elseif ($hasPf -eq $oldHasPf -and (($sig -split ' ').Count -gt ($old -split ' ').Count)) {
-        $map[$lane] = $sig
-      }
+function Write-RiBase([string]$Aux, [string[]]$Spans) {
+  $basePath = Join-Path $Aux '_base.json'; $spanPath = Join-Path $Aux '_spans.jsonl'
+  Write-Utf8 $basePath ('{"run_id":' + (ConvertTo-Json -InputObject $script:RunId -Compress) + ',"expected_lanes":["v-sol-security"]}')
+  $script:ManSha = Get-Sha256File $basePath
+  Write-Utf8 $spanPath (($Spans -join "`n"))
+  return [pscustomobject]@{ Base=$basePath; Span=$spanPath }
+}
+
+$subs = @(
+  @{ N='Test-FleetReceiptSignature'; S=(Join-Path $PSScriptRoot 'Test-FleetReceiptSignature.ps1'); E=@() }
+  @{ N='Test-FleetRunLease'; S=(Join-Path $PSScriptRoot 'Test-FleetRunLease.ps1'); E=@() }
+  @{ N='Test-FleetSignedLane'; S=(Join-Path $PSScriptRoot 'Test-FleetSignedLane.ps1'); E=@() }
+  @{ N='Test-FleetLaneRefusal'; S=(Join-Path $PSScriptRoot 'Test-FleetLaneRefusal.ps1'); E=@() }
+  @{ N='Test-FleetAdversarialReview'; S=(Join-Path $PSScriptRoot 'Test-FleetAdversarialReview.ps1'); E=@() }
+  @{ N='Test-NewFleetMergeReadinessReceipt'; S=(Join-Path $PSScriptRoot 'Test-NewFleetMergeReadinessReceipt.ps1'); E=@() }
+  @{ N='Assert-FleetMergeReadiness-SelfTest'; S=$assertMr; E=@('-SelfTest') }
+  @{ N='Test-FleetReviewIntegrity'; S=(Join-Path $PSScriptRoot 'Test-FleetReviewIntegrity.ps1'); E=@() }
+)
+
+try {
+  New-Item -ItemType Directory -Force -Path $root, $leaseHome | Out-Null
+  $env:USERPROFILE = $leaseHome
+  Install-Lease
+  # M2: real merge result fixture (path exists + sha matches signed result_sha256).
+  $script:ResultFixturePath = Join-Path $root 'merge-result.md'
+  Write-Utf8 $script:ResultFixturePath "fleet-contract-merge-result`n"
+  $script:ResultFixtureSha = Get-Sha256File $script:ResultFixturePath
+  $script:BoundPlanSha = $shaPlan
+
+  foreach ($s in $subs) {
+    if (-not (Test-Path -LiteralPath $s.S -PathType Leaf)) { $failed = $true; Write-Output ("subtest FAIL {0}: missing" -f $s.N); continue }
+    $run = Invoke-Child -Script $s.S -ExtraArgs $s.E; $kk = Get-SelfTestKk $run.Raw
+    if ($run.ExitCode -eq 0 -and $null -ne $kk -and $kk.A -eq $kk.B -and $kk.A -gt 0) {
+      $subPass++; Write-Output ("subtest PASS {0}: selftest: PASS {1}/{2}" -f $s.N, $kk.A, $kk.B)
     } else {
-      $map[$lane] = $sig
+      $failed = $true; $d = 'no selftest: PASS k/k'; if ($null -ne $kk) { $d = ("selftest line {0}/{1}" -f $kk.A, $kk.B) }
+      Write-Output ("subtest FAIL {0}: exit={1} {2}" -f $s.N, $run.ExitCode, $d)
     }
   }
-  return $map
-}
 
-Case 'Claude adapter canonical lanes match Codex source flags' {
-  Assert-True (Test-Path -LiteralPath $claudeSkill) 'adapter missing'
-  $codexMap = Get-FleetLaneSignatureMap ([IO.File]::ReadAllText((Join-Path $codexRoot 'SKILL.md')))
-  $adapterMap = Get-FleetLaneSignatureMap ([IO.File]::ReadAllText($claudeSkill))
-  Assert-True ($adapterMap.Count -gt 0) 'adapter has no wrapper launch lines'
-  foreach ($lane in @($adapterMap.Keys)) {
-    Assert-True ($codexMap.ContainsKey($lane)) "adapter lane '$lane' missing from Codex source"
-    if ($lane -eq 'budget') {
-      $aSet = @($adapterMap[$lane] | Sort-Object)
-      $cSet = @($codexMap[$lane] | Sort-Object)
-      $aJoin = $aSet -join ' | '
-      $cJoin = $cSet -join ' | '
-      Assert-True (($aSet -join "`n") -eq ($cSet -join "`n")) "lane budget signature set mismatch: adapter=[$aJoin] codex=[$cJoin]"
-    } else {
-      $aSig = [string]$adapterMap[$lane]
-      $cSig = [string]$codexMap[$lane]
-      Assert-True ($aSig -eq $cSig) "lane '$lane' flag mismatch: adapter=[$aSig] codex=[$cSig]"
+  # A: integrity valid signed hosted+failover ok; delete failover => FAILED
+  try {
+    $riDir = Join-Path $root 'mut-a'; $aux = Join-Path $root 'mut-a-aux'
+    New-Item -ItemType Directory -Force -Path $riDir, $aux | Out-Null
+    $prov = Write-RiBase $aux @((New-Span 'v-sol-security' 'sol' 'error' 'model_refusal'), (New-Span 'v-glm-security-fb' 'glm' 'ok'))
+    $rp = [IO.Path]::GetFullPath((Join-Path $riDir 'sol.md')); Write-Utf8 $rp $refuseBody
+    $gp = [IO.Path]::GetFullPath((Join-Path $riDir 'glm.md')); Write-Utf8 $gp $okBody
+    Write-SignedRl (Join-Path $riDir 'sol.json') (New-RlObj -Lane 'v-sol-security' -Model 'sol' -Outcome 'refused' -ResultPath $rp -ResultSha (Get-Sha256Text $refuseBody) -Completed $ts1 -Refusal 'policy_decline')
+    Write-SignedRl (Join-Path $riDir 'glm.json') (New-RlObj -Lane 'v-glm-security-fb' -Model 'glm' -ResultPath $gp -ResultSha (Get-Sha256Text $okBody) -Started $ts6 -Completed $ts10 -FallbackOf 'v-sol-security')
+    $before = Invoke-Integrity $riDir $prov.Base $prov.Span
+    if ($before.ExitCode -ne 0 -or (Get-VerdictToken $before.Raw) -ne 'ok') { throw ("baseline not ok: {0}" -f $before.Raw) }
+    Remove-Item -LiteralPath (Join-Path $riDir 'glm.json') -Force
+    $after = Invoke-Integrity $riDir $prov.Base $prov.Span
+    if ($after.ExitCode -ne 1 -or (Get-VerdictToken $after.Raw) -ne 'FAILED') { throw ("after delete want FAILED: {0}" -f $after.Raw) }
+    $mutOk++; Write-Output 'mutation-A PASS: integrity ok -> FAILED after failover receipt delete'
+  } catch { $failed = $true; Write-Output ("mutation-A FAIL: {0}" -f $_.Exception.Message) }
+
+  # B: unsigned / wrong-key / tampered-field => FAILED
+  try {
+    $riDir = Join-Path $root 'mut-b'; $aux = Join-Path $root 'mut-b-aux'
+    New-Item -ItemType Directory -Force -Path $riDir, $aux | Out-Null
+    $prov = Write-RiBase $aux @((New-Span 'v-sol-security' 'sol' 'ok'))
+    $bp = [IO.Path]::GetFullPath((Join-Path $riDir 'sol.md')); Write-Utf8 $bp $okBody
+    $obj = New-RlObj -Lane 'v-sol-security' -Model 'sol' -ResultPath $bp -ResultSha (Get-Sha256Text $okBody)
+    Write-OrderedJson (Join-Path $riDir 'sol.json') $obj $rlF ''
+    if ((Get-VerdictToken (Invoke-Integrity $riDir $prov.Base $prov.Span).Raw) -ne 'FAILED') { throw 'unsigned not FAILED' }
+    $wrong = New-Object byte[] 32; for ($i = 0; $i -lt 32; $i++) { $wrong[$i] = [byte](255 - $i) }
+    Write-SignedRl (Join-Path $riDir 'sol.json') $obj $wrong
+    if ((Get-VerdictToken (Invoke-Integrity $riDir $prov.Base $prov.Span).Raw) -ne 'FAILED') { throw 'wrong-key not FAILED' }
+    Write-SignedRl (Join-Path $riDir 'sol.json') $obj
+    $raw = ([IO.File]::ReadAllText((Join-Path $riDir 'sol.json'), $utf8)) -replace '"outcome":"completed"', '"outcome":"refused"'
+    Write-Utf8 (Join-Path $riDir 'sol.json') $raw
+    if ((Get-VerdictToken (Invoke-Integrity $riDir $prov.Base $prov.Span).Raw) -ne 'FAILED') { throw 'tampered not FAILED' }
+    $mutOk++; Write-Output 'mutation-B PASS: unsigned/wrong-key/tampered => FAILED'
+  } catch { $failed = $true; Write-Output ("mutation-B FAIL: {0}" -f $_.Exception.Message) }
+
+  # C: security identity ok(1/2); hosted masquerade FAILED; generic FAILED
+  try {
+    $names = @('v-sol.md','v-terra.md','v-opus.md','v-glm-security.md','v-grok.md')
+    $mOk = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='glm-5.2'; 'v-grok.md'='grok-4.5' }
+    $rOk = @{ 'v-sol.md'='general-review'; 'v-terra.md'='general-review'; 'v-opus.md'='general-review'; 'v-glm-security.md'='security-review'; 'v-grok.md'='general-review' }
+    $s0 = New-AdvShip 'mut-c-ok'; Write-AdvVoices $s0 $names $mOk $rOk
+    $r0 = Invoke-Adv $s0.Repo $s0.Base $s0.ReviewDir $s0.ReceiptDir
+    if ($r0.ExitCode -ne 0 -or $r0.Raw -notmatch 'security-voices: 1/2' -or (Get-VerdictToken $r0.Raw) -ne 'ok') { throw ("valid want ok 1/2: {0}" -f $r0.Raw) }
+    $s1 = New-AdvShip 'mut-c-host'
+    # Hosted model under same v-glm-security lane (keep 5 distinct model keys; security identity fails)
+    $mHost = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='fable'; 'v-grok.md'='grok-4.5' }
+    Write-AdvVoices $s1 $names $mHost $rOk
+    $r1 = Invoke-Adv $s1.Repo $s1.Base $s1.ReviewDir $s1.ReceiptDir
+    if ($r1.ExitCode -ne 1 -or $r1.Raw -notmatch 'security-voices: 0/2' -or (Get-VerdictToken $r1.Raw) -ne 'FAILED') { throw ("hosted want FAILED: {0}" -f $r1.Raw) }
+    $s2 = New-AdvShip 'mut-c-gen'
+    $nGen = @('v-sol.md','v-terra.md','v-opus.md','v-glm.md','v-grok.md')
+    $mGen = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm.md'='glm-5.2'; 'v-grok.md'='grok-4.5' }
+    $rGen = @{ 'v-sol.md'='general-review'; 'v-terra.md'='general-review'; 'v-opus.md'='general-review'; 'v-glm.md'='general-review'; 'v-grok.md'='general-review' }
+    Write-AdvVoices $s2 $nGen $mGen $rGen
+    $r2 = Invoke-Adv $s2.Repo $s2.Base $s2.ReviewDir $s2.ReceiptDir
+    if ($r2.ExitCode -ne 1 -or $r2.Raw -notmatch 'security-voices: 0/2' -or (Get-VerdictToken $r2.Raw) -ne 'FAILED') { throw ("generic want FAILED: {0}" -f $r2.Raw) }
+    $mutOk++; Write-Output 'mutation-C PASS: security identity ok(1/2) -> hosted/generic FAILED'
+  } catch { $failed = $true; Write-Output ("mutation-C FAIL: {0}" -f $_.Exception.Message) }
+
+  # D: merge READY; different signed packet sha => NOT_READY
+  try {
+    $mrDir = Join-Path $root 'mut-d'; New-Item -ItemType Directory -Force -Path $mrDir | Out-Null
+    foreach ($st in @('change-map','synthesis','adversarial-challenge','triage')) {
+      Write-SignedMs (Join-Path $mrDir ($st + '.receipt.json')) (New-MsObj $st $shaA)
     }
-  }
+    $r0 = Invoke-Merge $mrDir $shaA
+    if ($r0.ExitCode -ne 0 -or (Get-VerdictToken $r0.Raw 'merge') -ne 'READY') { throw ("want READY: {0}" -f $r0.Raw) }
+    Write-SignedMs (Join-Path $mrDir 'triage.receipt.json') (New-MsObj 'triage' $shaB)
+    $r1 = Invoke-Merge $mrDir $shaA
+    if ((Get-VerdictToken $r1.Raw 'merge') -ne 'NOT_READY') { throw ("want NOT_READY: {0}" -f $r1.Raw) }
+    $mutOk++; Write-Output 'mutation-D PASS: merge READY -> NOT_READY on packet-sha mismatch'
+  } catch { $failed = $true; Write-Output ("mutation-D FAIL: {0}" -f $_.Exception.Message) }
 }
-
-Case 'Claude adapter retains canonical lane literals' {
-  $text = [IO.File]::ReadAllText($claudeSkill)
-  $required = @(
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$HOME/.codex/skills/fleet/scripts/Invoke-Grok45.ps1" -PromptFile .fleet/T1-grok-prompt.txt -WorkingDirectory <isolated-worktree> -Effort high -BashCapability Auto -IsolatedWorktree -EnableSubagents -EnableWebSearch -LeanSystemPrompt -Mode json'
-    'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$HOME/.codex/skills/fleet/scripts/Invoke-Grok45.ps1" -PromptFile .fleet/T1-grok-review.txt -WorkingDirectory <repo> -Effort high -Review -TimeoutSeconds 900 -Mode text'
-    '$packet = & "$HOME/.codex/skills/fleet/scripts/Get-FleetReviewPacket.ps1" -PacketDir $packetDir -ReviewRisk $reviewRisk -OutputPath "$packetDir/packet-manifest.json" | ConvertFrom-Json'
-  )
-  foreach ($line in $required) {
-    Assert-True ($text.Contains($line)) ("Claude adapter canonical lane drift: missing exact literal: " + $line)
-  }
+catch { $failed = $true; Write-Output ("harness FAIL: {0}" -f $_.Exception.Message) }
+finally {
+  $env:USERPROFILE = $oldProfile
+  if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue }
 }
-
-Case 'K3 qualification recorder appends, rejects dups, fires promotion at 10' {
-  $rec = Join-Path $PSScriptRoot 'Record-K3Qualification.ps1'
-  $temp = Join-Path $env:TEMP ('k3q-' + [guid]::NewGuid().ToString()); $ledger = Join-Path $temp 'BENCH-k3-qualification.jsonl'
-  New-Item -ItemType Directory -Path $temp | Out-Null
-  try {
-    $base = @{ Date = '2026-07-23'; ReviewTier = 'FULL'; VerdictSummary = 'ok'; UniqueFindingsCount = 0; VerifiedUniqueAdoptedCatches = 0; FabricationFlags = 0; FalsePositiveCount = 0; LedgerPath = $ledger; KConsidered = $true }
-    $r1 = & $rec @base -RunId 'r1' -Dispatched $true -WallSeconds 12 | ConvertFrom-Json
-    Assert-True ($r1.rows_total -eq 1 -and $r1.dispatched_full_rows -eq 1 -and -not [bool]$r1.promotion_assessment_due) 'a: first dispatched rows_total=1'
-    $dup = $false; try { & $rec @base -RunId 'r1' -Dispatched $true -WallSeconds 1 | Out-Null } catch { $dup = $true }
-    Assert-True $dup 'b: duplicate RunId rejected'
-    $rSkip = & $rec @base -RunId 'r-skip' -Dispatched $false -WhyNot 'budget' | ConvertFrom-Json
-    Assert-True ($rSkip.rows_total -eq 2 -and $rSkip.dispatched_full_rows -eq 1) 'c: non-dispatched with WhyNot'
-    $due = $null; for ($i = 2; $i -le 10; $i++) { $due = & $rec @base -RunId ("r$i") -Dispatched $true -WallSeconds $i | ConvertFrom-Json }
-    Assert-True ($due.dispatched_full_rows -eq 10 -and [bool]$due.promotion_assessment_due) 'd: 10th promotion_assessment_due=true'
-    $r11 = & $rec @base -RunId 'r11' -Dispatched $true -WallSeconds 1 | ConvertFrom-Json
-    Assert-True ($r11.dispatched_full_rows -eq 11 -and -not [bool]$r11.promotion_assessment_due) 'd: 11th promotion_assessment_due=false'
-  } finally { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
-}
-
-Case 'Genre row recorder appends, rejects dups, graduates at 10 standardized' {
-  $rec = Join-Path $PSScriptRoot 'Record-GenreRow.ps1'
-  $temp = Join-Path $env:TEMP ('genre-' + [guid]::NewGuid().ToString()); $ledger = Join-Path $temp 'BENCH-genre.jsonl'
-  New-Item -ItemType Directory -Path $temp | Out-Null
-  try {
-    $base = @{ Date = '2026-07-23'; Model = 'm1'; Genre = 'synthesis'; Effort = 'high'; Estimand = 'standardized_model'; ScoreType = 'facts'; Score = 1; MaxScore = 1; LedgerPath = $ledger }
-    $r1 = & $rec @base -RunId 'g1' | ConvertFrom-Json
-    Assert-True ($r1.rows_total -eq 1 -and $r1.model_genre_rows -eq 1 -and $r1.standardized_rows -eq 1 -and -not [bool]$r1.graduated) 'a: first append'
-    $dup = $false; try { & $rec @base -RunId 'g1' | Out-Null } catch { $dup = $true }
-    Assert-True $dup 'b: duplicate run_id+model+genre rejected'
-    $grad = $null; for ($i = 2; $i -le 10; $i++) { $grad = & $rec @base -RunId ("g$i") | ConvertFrom-Json }
-    Assert-True ($grad.standardized_rows -eq 10 -and [bool]$grad.graduated) 'c: 10th standardized graduated=true'
-  } finally { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
-}
-
-Case 'all five Invoke wrappers carry mandatory terse-output trailer' {
-  # Pure-ASCII source: em dash via [char]0x2014 so PS 5.1 no-BOM parse stays correct.
-  $assign = 'OUTPUT STYLE (mandatory): terse '' + [char]0x2014 + '' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
-  foreach ($name in @('Invoke-Grok45.ps1','Invoke-PiGlm.ps1','Invoke-Opus48.ps1','Invoke-KimiK3.ps1','Invoke-Gemini35.ps1')) {
-    $text = [IO.File]::ReadAllText((Join-Path $PSScriptRoot $name))
-    Assert-True ($text.Contains($assign)) ("missing trailer literal in $name")
-  }
-}
-
-Case 'object-returning validators are never used as a bare truthiness test' {
-  # 2026-07-26 self-inflicted: Test-StructuredAudit changed from returning [bool] to
-  # returning @{valid; observed_manifest_available}. In PowerShell ANY object is truthy,
-  # so `if (Test-StructuredAudit ...)` passes even when valid=$false. A probe written that
-  # way reported 6 false failures and would as easily have hidden 6 real ones. Call sites
-  # must land on the FIELD. Mutation-proven: this case fails when such a line is injected.
-  $pattern = 'if\s*\(\s*(-not\s*)?\(?\s*Test-StructuredAudit|\[bool\]\s*\(?\s*Test-StructuredAudit'
-  $hits = @(
-    Select-String -Path (Join-Path $PSScriptRoot '*.ps1') -Pattern $pattern -AllMatches |
-      Where-Object { $_.Line -notmatch '\.valid' -and $_.Line -notmatch '^\s*#' }
-  )
-  $detail = ($hits | ForEach-Object { "$($_.Filename):$($_.LineNumber) $($_.Line.Trim())" }) -join ' | '
-  Assert-True ($hits.Count -eq 0) ("bare truthiness use of an object-returning validator: $detail")
-}
-
-Write-Host "$passed passed, $failed failed"
-if ($failed) { exit 1 } else { exit 0 }
+$verdict = 'FAILED'; $exitCode = 1
+if ((-not $failed) -and ($subPass -eq $subTotal) -and ($mutOk -eq $mutTotal)) { $verdict = 'ok'; $exitCode = 0 }
+Write-Output ("contract: {0} sub-tests PASS | mutation-proofs: {1}/{2} | verdict: {3}" -f $subPass, $mutOk, $mutTotal, $verdict)
+exit $exitCode

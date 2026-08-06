@@ -1,16 +1,51 @@
 # Gate: Fleet run needs a real adversarial-review receipt covering shipped diff.
-# Summary: review: <tier> | voices: N qualified / M candidates / R required | packet: <state> | verdict: ok|FAILED
+# Summary: review: <tier> | voices: N qualified / M candidates / R required [| profile: ... | security-voices: P/2] | packet: <state> | verdict: ok|FAILED
+# Authority: signed review_lane receipts under -ReceiptDir (HMAC via run lease). Filename is display only.
+# -ReviewProfile / -Tier optional assertions; signed plan-derived values win; conflict => FAILED.
 param(
   [Parameter(Mandatory)][string]$Repo,
   [Parameter(Mandatory)][string]$BaseRef,
+  [Parameter(Mandatory)][string]$RunId,
+  [Parameter(Mandatory)][string]$ReceiptDir,
+  [Parameter(Mandatory)][string]$PacketManifest,
   [string]$ReviewDir,
-  [ValidateSet('MICRO', 'LIGHT', 'STANDARD', 'FULL')][string]$Tier = 'STANDARD',
+  [ValidateSet('MICRO', 'LIGHT', 'STANDARD', 'FULL')][string]$Tier,
+  [ValidateSet('general', 'security-sensitive')][string]$ReviewProfile,
+  [string]$LockedPlan,
   [string[]]$PathFilter = @(),
   [ValidateSet('text', 'json')][string]$Mode = 'text'
 )
 $ErrorActionPreference = 'Stop'
-$MinVoiceBytes = 200
-$SuccessStatuses = @('ok', 'needs_gate_validation', 'done', 'passed')
+. (Join-Path $PSScriptRoot 'FleetReviewVoice.Helpers.ps1')
+
+# Use result_path basename so *.json status (needs_gate_validation) is enforced.
+# voice_id/lane_id alone lose the extension and mis-classify JSON as markdown.
+function Get-FleetVoiceAssessmentsFromReceipts {
+  param([object[]]$Items)
+  $rows = New-Object System.Collections.ArrayList
+  foreach ($it in @($Items)) {
+    $r = $it.Receipt; $req = [string]$r.requested_model; $mk = Get-VoiceModelKey $req
+    $isSec = Test-SignedSecurityRole $r
+    $secQualRole = ($isSec -and ($mk -in $script:OpenWeightKeys))
+    $rp = [string]$it.ResultPath
+    $name = [IO.Path]::GetFileName($rp)
+    if ([string]::IsNullOrWhiteSpace($name)) {
+      $disp = [string]$r.voice_id
+      if ([string]::IsNullOrWhiteSpace($disp)) { $disp = [string]$r.lane_id }
+      $name = $disp
+      if ($name -notmatch '\.') { $name = "$name.md" }
+    }
+    $bytes = [int64]([Text.Encoding]::UTF8.GetByteCount([string]$it.Content))
+    $reason = Test-FleetVoiceContent -Name $name -Text ([string]$it.Content) -Bytes $bytes -IsSecurityRole:([bool]$isSec)
+    [void]$rows.Add([pscustomobject]@{
+        Name = $name; Stem = [IO.Path]::GetFileNameWithoutExtension($name)
+        Path = $rp; Qualified = ($null -eq $reason); Reason = $reason
+        ModelKey = $mk; IsSecurityRole = [bool]$secQualRole
+        ReviewRole = [string]$r.review_role; RequestedModel = $req
+      })
+  }
+  return @($rows)
+}
 
 function Get-Sha256Hex([byte[]]$Bytes) {
   $sha = [Security.Cryptography.SHA256]::Create()
@@ -26,22 +61,6 @@ function Get-RequiredVoiceCount([string]$T) {
     'FULL' { return 5 }
     default { throw "Unknown tier: $T" }
   }
-}
-
-# A voice is one MODEL, not one file. Grok fans out to three diverse-lens lanes at FULL
-# (Spec/Correctness/Regression, review-protocol.md charter 5) and must count as ONE voice -
-# three same-family files passing as three voices is the same-family dominance the bias
-# controls forbid, and it would let a panel of {opus, glm, grok×3} satisfy "5 required"
-# while missing Sol and Terra entirely. Files whose stem carries a known model token
-# collapse onto that token; anything else keys on its own stem, so generic lane files
-# (v-1, lane-result) stay distinct exactly as before.
-$script:KnownModelTokens = @('sol', 'terra', 'opus', 'glm', 'grok', 'kimi', 'gemini', 'spark')
-function Get-VoiceModelKey([string]$Stem) {
-  $lower = $Stem.ToLowerInvariant()
-  foreach ($tok in $script:KnownModelTokens) {
-    if ($lower -match ('(^|[^a-z])' + [regex]::Escape($tok) + '([^a-z]|$)')) { return $tok }
-  }
-  return $lower
 }
 
 function Quote-GitArg([string]$Value) {
@@ -77,23 +96,19 @@ function Get-ShippedDiffBytes {
   finally { $ms.Dispose(); $proc.Dispose() }
 }
 
-function Find-PacketManifest([string]$Dir) {
-  $direct = Join-Path $Dir 'packet-manifest.json'
-  if (Test-Path -LiteralPath $direct -PathType Leaf) { return $direct }
-  $found = @(Get-ChildItem -LiteralPath $Dir -Filter 'packet-manifest.json' -File -Recurse -ErrorAction SilentlyContinue)
-  if ($found.Count -gt 0) { return $found[0].FullName }
-  return $null
-}
-
 function Find-FinalDiff([string]$Dir, [string]$ManifestPath) {
-  $direct = Join-Path $Dir 'final.diff'
-  if (Test-Path -LiteralPath $direct -PathType Leaf) { return $direct }
+  if (-not [string]::IsNullOrWhiteSpace($Dir)) {
+    $direct = Join-Path $Dir 'final.diff'
+    if (Test-Path -LiteralPath $direct -PathType Leaf) { return $direct }
+  }
   if ($ManifestPath) {
     $beside = Join-Path (Split-Path -Parent $ManifestPath) 'final.diff'
     if (Test-Path -LiteralPath $beside -PathType Leaf) { return $beside }
   }
-  $found = @(Get-ChildItem -LiteralPath $Dir -Filter 'final.diff' -File -Recurse -ErrorAction SilentlyContinue)
-  if ($found.Count -gt 0) { return $found[0].FullName }
+  if (-not [string]::IsNullOrWhiteSpace($Dir) -and (Test-Path -LiteralPath $Dir -PathType Container)) {
+    $found = @(Get-ChildItem -LiteralPath $Dir -Filter 'final.diff' -File -Recurse -ErrorAction SilentlyContinue)
+    if ($found.Count -gt 0) { return $found[0].FullName }
+  }
   return $null
 }
 
@@ -125,54 +140,10 @@ function Test-ManifestShape([string]$Path) {
   return $null
 }
 
-function Test-VoiceContent([string]$Name, [string]$Text, [int64]$Bytes) {
-  if ($Bytes -lt $MinVoiceBytes) { return "too small ($Bytes < $MinVoiceBytes bytes)" }
-  if ([string]::IsNullOrWhiteSpace($Text)) { return 'blank body' }
-  $isJson = ($Name -like '*-review*.json' -or $Name -like '*-result.json')
-  if ($isJson) {
-    try { $obj = $Text | ConvertFrom-Json -ErrorAction Stop }
-    catch { return 'json unparseable' }
-    if ($null -eq $obj) { return 'json null' }
-    $st = $null
-    if ($obj.PSObject.Properties['status']) { $st = [string]$obj.status }
-    if ([string]::IsNullOrWhiteSpace($st) -or ($st -notin $SuccessStatuses)) {
-      return "json status not success (got '$st')"
-    }
-    $body = ''
-    if ($obj.PSObject.Properties['response']) { $body = [string]$obj.response }
-    if ([string]::IsNullOrWhiteSpace($body) -and $obj.PSObject.Properties['verdict']) {
-      $body = [string]$obj.verdict
-    }
-    if ([string]::IsNullOrWhiteSpace($body)) { return 'json missing nonempty response/verdict' }
-    return $null
+function Format-Summary([string]$T, [int]$Q, [int]$C, [int]$R, [string]$P, [string]$V, [string]$Prof = 'general', [int]$SecP = 0) {
+  if ($Prof -eq 'security-sensitive') {
+    return "review: $T | voices: $Q qualified / $C candidates / $R required | profile: security-sensitive | security-voices: $SecP/2 | packet: $P | verdict: $V"
   }
-  # markdown voice
-  if ($Text -match '(?i)\b(CRITICAL|HIGH|MEDIUM|LOW)\b') { return $null }
-  if ($Text -match '(?i)\b(no findings|none material|zero findings|no material findings)\b') { return $null }
-  return 'markdown lacks severity token or no-findings statement'
-}
-
-function Get-VoiceAssessments([string]$Dir) {
-  $rows = New-Object System.Collections.ArrayList
-  if (-not (Test-Path -LiteralPath $Dir -PathType Container)) { return @() }
-  foreach ($f in @(Get-ChildItem -LiteralPath $Dir -File -Recurse -ErrorAction SilentlyContinue | Sort-Object FullName)) {
-    $name = $f.Name
-    if ($name -eq 'packet-manifest.json' -or $name -eq 'final.diff') { continue }
-    $isVoice = ($name -like 'v-*.md' -or $name -like '*-review*.json' -or $name -like '*-result.json')
-    if (-not $isVoice) { continue }
-    $text = ''
-    if ($f.Length -gt 0) { $text = [IO.File]::ReadAllText($f.FullName) }
-    $reason = Test-VoiceContent -Name $name -Text $text -Bytes $f.Length
-    $stem = [IO.Path]::GetFileNameWithoutExtension($name)
-    [void]$rows.Add([pscustomobject]@{
-        Name = $name; Stem = $stem; Path = $f.FullName
-        Qualified = ($null -eq $reason); Reason = $reason
-      })
-  }
-  return @($rows)
-}
-
-function Format-Summary([string]$T, [int]$Q, [int]$C, [int]$R, [string]$P, [string]$V) {
   return "review: $T | voices: $Q qualified / $C candidates / $R required | packet: $P | verdict: $V"
 }
 
@@ -210,79 +181,117 @@ function Write-Result {
   }
 }
 
-# --- main ---
-$resolvedRepo = (Resolve-Path -LiteralPath $Repo).Path
-if ([string]::IsNullOrWhiteSpace($ReviewDir)) {
-  $ReviewDir = Join-Path $resolvedRepo '.fleet-review'
-}
-
-$required = Get-RequiredVoiceCount $Tier
-$shippedBytes = Get-ShippedDiffBytes -RepoPath $resolvedRepo -Base $BaseRef -Paths $PathFilter
-
-if ($null -eq $shippedBytes -or $shippedBytes.Length -eq 0) {
-  $summary = Format-Summary $Tier 0 0 $required 'match' 'ok'
-  $msg = "nothing to review (empty shipped diff vs $BaseRef)"
-  $note = $null; if ($Tier -eq 'MICRO') { $note = 'voices were not required' }
-  Write-Result -Summary $summary -Verdict 'ok' -Packet 'match' -Qualified 0 -Candidates 0 `
-    -Required $required -VoiceRows @() -Message $msg -VoicesNote $note
-  exit 0
-}
-
-if (-not (Test-Path -LiteralPath $ReviewDir -PathType Container)) {
-  $summary = Format-Summary $Tier 0 0 $required 'missing' 'FAILED'
-  $msg = "no review happened: ReviewDir missing: $ReviewDir"
-  Write-Result -Summary $summary -Verdict 'FAILED' -Packet 'missing' -Qualified 0 -Candidates 0 `
-    -Required $required -VoiceRows @() -Message $msg
+function Emit-Fail([string]$Msg, [string]$T, [int]$Req, [string]$Prof, [string]$Pkt = 'missing') {
+  $summary = Format-Summary $T 0 0 $Req $Pkt 'FAILED' $Prof 0
+  Write-Result -Summary $summary -Verdict 'FAILED' -Packet $Pkt -Qualified 0 -Candidates 0 `
+    -Required $Req -VoiceRows @() -Message $Msg
   exit 1
 }
 
-$manifestPath = Find-PacketManifest $ReviewDir
-$finalDiffPath = Find-FinalDiff $ReviewDir $manifestPath
-$packetStatus = 'missing'
-$packetMsg = $null
+# --- main ---
+$callerTier = $PSBoundParameters.ContainsKey('Tier')
+$callerProfile = $PSBoundParameters.ContainsKey('ReviewProfile')
+$hasLockedPlan = -not [string]::IsNullOrWhiteSpace($LockedPlan)
+if (-not $callerTier) { $Tier = 'STANDARD' }
+if (-not $callerProfile) { $ReviewProfile = 'general' }
+$resolvedRepo = (Resolve-Path -LiteralPath $Repo).Path
+if ([string]::IsNullOrWhiteSpace($ReviewDir)) { $ReviewDir = Join-Path $resolvedRepo '.fleet-review' }
+$shippedBytes = Get-ShippedDiffBytes -RepoPath $resolvedRepo -Base $BaseRef -Paths $PathFilter
+$nonEmpty = ($null -ne $shippedBytes -and $shippedBytes.Length -gt 0)
 
-if (-not $manifestPath -or -not $finalDiffPath) {
-  $packetStatus = 'missing'
-  $packetMsg = "review packet incomplete under $ReviewDir (need packet-manifest.json and final.diff)"
-}
-else {
-  $shapeErr = Test-ManifestShape $manifestPath
-  if ($shapeErr) {
-    $packetStatus = 'missing'
-    $packetMsg = "review packet manifest invalid: $shapeErr"
+# L1: BaseRef==HEAD or empty shipped diff is not "nothing to review ok" for non-MICRO / security.
+$baseIsHead = $false
+try {
+  $headSha = (& git -C $resolvedRepo rev-parse HEAD 2>$null | Out-String).Trim()
+  $baseSha = (& git -C $resolvedRepo rev-parse $BaseRef 2>$null | Out-String).Trim()
+  if ($headSha -and $baseSha -and ($headSha -eq $baseSha)) { $baseIsHead = $true }
+} catch { }
+
+if (-not $nonEmpty) {
+  $required = Get-RequiredVoiceCount $Tier
+  if ($Tier -ne 'MICRO') {
+    Emit-Fail "empty shipped diff vs $BaseRef (non-MICRO requires real diff; zero-telemetry rejected)" $Tier $required $ReviewProfile
   }
-  else {
-    $frozenBytes = [IO.File]::ReadAllBytes($finalDiffPath)
-    $shippedHash = Get-Sha256Hex $shippedBytes
-    $frozenHash = Get-Sha256Hex $frozenBytes
-    if ($shippedHash -eq $frozenHash) { $packetStatus = 'match' }
-    else {
-      $packetStatus = 'MISMATCH'
-      $packetMsg = "review predates the shipped changes: frozen final.diff SHA-256 does not match shipped diff vs $BaseRef"
+  if ($ReviewProfile -eq 'security-sensitive') {
+    Emit-Fail "security-sensitive empty shipped diff vs $BaseRef (FAILED, not nothing-to-review)" $Tier $required $ReviewProfile
+  }
+  $note = 'voices were not required'
+  Write-Result -Summary (Format-Summary $Tier 0 0 $required 'match' 'ok' $ReviewProfile 0) -Verdict 'ok' `
+    -Packet 'match' -Qualified 0 -Candidates 0 -Required $required -VoiceRows @() `
+    -Message "nothing to review (empty shipped diff vs $BaseRef)" -VoicesNote $note
+  exit 0
+}
+if ($baseIsHead -and $Tier -ne 'MICRO') {
+  Emit-Fail "BaseRef resolves to HEAD (no real diff) for non-MICRO review" $Tier (Get-RequiredVoiceCount $Tier) $ReviewProfile
+}
+
+try { $verified = Get-VerifiedReviewLaneReceipts -RunId $RunId -ReceiptDir $ReceiptDir }
+catch { Emit-Fail ("lease/receipt load failed: " + $_.Exception.Message) $Tier (Get-RequiredVoiceCount $Tier) $ReviewProfile }
+if (-not $verified.Ok) { Emit-Fail ([string]$verified.Error) $Tier (Get-RequiredVoiceCount $Tier) $ReviewProfile }
+
+$auth = Resolve-FleetReviewAuthority -Verified $verified -LockedPlan $LockedPlan -HasLockedPlan:$hasLockedPlan `
+  -CallerProfile $(if ($callerProfile) { $PSBoundParameters['ReviewProfile'] } else { $null }) `
+  -CallerTier $(if ($callerTier) { $PSBoundParameters['Tier'] } else { $null }) `
+  -DefaultProfile $ReviewProfile -DefaultTier $Tier
+if (-not $auth.Ok) { Emit-Fail ([string]$auth.Error) $Tier (Get-RequiredVoiceCount $Tier) $ReviewProfile }
+$ReviewProfile = [string]$auth.Profile; $Tier = [string]$auth.Tier
+$required = Get-RequiredVoiceCount $Tier
+
+# L3: bind LockedPlan file hash to signed locked_plan_sha256 (security receipts).
+if ($hasLockedPlan) {
+  if (-not (Test-Path -LiteralPath $LockedPlan -PathType Leaf)) {
+    Emit-Fail "LockedPlan missing: $LockedPlan" $Tier $required $ReviewProfile
+  }
+  $planFileSha = (Get-FileSha256Hex $LockedPlan).ToLowerInvariant()
+  foreach ($it in @($verified.Items)) {
+    $rr = $it.Receipt
+    if (-not (Test-SignedSecurityRole $rr)) { continue }
+    $signedPlan = ''; if ($rr.PSObject.Properties['locked_plan_sha256']) { $signedPlan = ([string]$rr.locked_plan_sha256).ToLowerInvariant() }
+    if ($signedPlan -cne $planFileSha) {
+      Emit-Fail "locked_plan_sha256 mismatch for security receipt (signed=$signedPlan file=$planFileSha)" $Tier $required $ReviewProfile
     }
   }
 }
 
-$voiceRows = @(Get-VoiceAssessments $ReviewDir)
+if (-not (Test-Path -LiteralPath $PacketManifest -PathType Leaf)) {
+  Emit-Fail "PacketManifest missing: $PacketManifest" $Tier $required $ReviewProfile
+}
+$finalDiffPath = Find-FinalDiff $ReviewDir $PacketManifest
+$packetStatus = 'missing'; $packetMsg = $null
+$shapeErr = Test-ManifestShape $PacketManifest
+if ($shapeErr) { $packetMsg = "review packet manifest invalid: $shapeErr" }
+elseif (-not $finalDiffPath) { $packetMsg = 'review packet incomplete (need final.diff beside PacketManifest or under ReviewDir)' }
+else {
+  $shippedHash = Get-Sha256Hex $shippedBytes; $frozenHash = Get-Sha256Hex ([IO.File]::ReadAllBytes($finalDiffPath))
+  if ($shippedHash -eq $frozenHash) { $packetStatus = 'match' }
+  else { $packetStatus = 'MISMATCH'; $packetMsg = "review predates the shipped changes: frozen final.diff SHA-256 does not match shipped diff vs $BaseRef" }
+}
+
+$voiceRows = @(Get-FleetVoiceAssessmentsFromReceipts -Items $verified.Items)
 $candidates = $voiceRows.Count
-# Count DISTINCT MODELS among qualified voices, not distinct files: Grok's three fan-out
-# lanes share the `grok` key and collapse to one voice here (see Get-VoiceModelKey).
 $qualifiedModels = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
 foreach ($row in $voiceRows) {
-  if ($row.Qualified) { [void]$qualifiedModels.Add((Get-VoiceModelKey $row.Stem)) }
+  if ($row.Qualified -and -not [string]::IsNullOrWhiteSpace([string]$row.ModelKey)) {
+    [void]$qualifiedModels.Add([string]$row.ModelKey)
+  }
 }
 $voiceCount = $qualifiedModels.Count
-$voicesOk = ($voiceCount -ge $required)
-if ($Tier -eq 'MICRO' -and $required -eq 0) { $voicesOk = $true }
-
+$voicesOk = ($voiceCount -ge $required); if ($Tier -eq 'MICRO' -and $required -eq 0) { $voicesOk = $true }
+$secPreferred = 0; $securityOk = $true
+if ($ReviewProfile -eq 'security-sensitive') {
+  $secStats = Get-SecurityVoiceStats $voiceRows
+  $secPreferred = [int]$secStats.Preferred
+  $securityOk = ($Tier -eq 'FULL') -and [bool]$secStats.Ok
+  if (-not $packetMsg) {
+    if ($Tier -ne 'FULL') { $packetMsg = "security-sensitive profile requires Tier=FULL (got $Tier)" }
+    elseif (-not $secStats.Ok) { $packetMsg = 'security-sensitive: need >=1 qualified open-weights security identity (glm|kimi preferred; grok backup)' }
+  }
+}
 $verdict = 'FAILED'
-if ($packetStatus -eq 'match' -and $voicesOk) { $verdict = 'ok' }
-
-$summary = Format-Summary $Tier $voiceCount $candidates $required $packetStatus $verdict
-$note = $null
-if ($Tier -eq 'MICRO' -and $required -eq 0) { $note = 'voices were not required' }
-Write-Result -Summary $summary -Verdict $verdict -Packet $packetStatus -Qualified $voiceCount `
-  -Candidates $candidates -Required $required -VoiceRows $voiceRows -Message $packetMsg -VoicesNote $note
-
+if ($packetStatus -eq 'match' -and $voicesOk -and $securityOk) { $verdict = 'ok' }
+$note = $null; if ($Tier -eq 'MICRO' -and $required -eq 0) { $note = 'voices were not required' }
+Write-Result -Summary (Format-Summary $Tier $voiceCount $candidates $required $packetStatus $verdict $ReviewProfile $secPreferred) `
+  -Verdict $verdict -Packet $packetStatus -Qualified $voiceCount -Candidates $candidates -Required $required `
+  -VoiceRows $voiceRows -Message $packetMsg -VoicesNote $note
 if ($verdict -eq 'ok') { exit 0 }
 exit 1

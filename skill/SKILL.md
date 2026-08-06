@@ -177,10 +177,14 @@ the Definition of Done.
    keep the blunt "find any defeating input" briefs for the open-weights voices. Template:
    [references/defensive-review-brief.md](references/defensive-review-brief.md).
 
-5. **Test suites are exempt from the 300-line source cap** (raised to 600 via
-   `Assert-FleetFileSize.ps1 -TestFileMaxLines`, matching `Test-*.ps1` / `*.Tests.*` / `*.spec.*`).
-   Comprehensive negative-control suites legitimately exceed 300; do NOT run a compression lane for
-   them (wasted two today). Extract shared fixtures into a `*Test.Helpers.ps1` when a suite is large.
+5. **File-size is a BAND, not a wall — never compress code just to hit a number.** The 300-line
+   target still pulls toward small, readable files (it forces real helper extraction, and the AI
+   works cleaner code faster). But `Assert-FleetFileSize.ps1` now WARNs instead of blocking in a
+   grace band and only BLOCKs on real bloat: production `warn 300 / block 400`, test suites
+   `warn 400 / block 600` (`Test-*.ps1` / `*.Tests.*` / `*.spec.*`). A clean, cohesive file at 330
+   is a WARN you glance at — resolve overage by a REAL split (a genuine boundary) or a shared
+   `*Test.Helpers.ps1`, NEVER by `;`-jamming statements to claw back a few lines (that makes the
+   code worse to read — the exact opposite of the point). Only files past the hard ceiling block.
 
 ## Modes / Tiers
 

@@ -229,11 +229,26 @@ try {
     throw "git worktree add failed for $($script:worktreePath) branch $($script:branchName) (exit $wtCode)"
   }
 
-  foreach ($rel in @($CopyFile)) {
-    if ([string]::IsNullOrWhiteSpace($rel)) { continue }
+  # Flatten comma-joined lists (callers sometimes pass "a,b" as one arg) and normalize.
+  $copyEntries = New-Object System.Collections.ArrayList
+  foreach ($item in @($CopyFile)) {
+    if ([string]::IsNullOrWhiteSpace($item)) { continue }
+    foreach ($piece in ([string]$item -split ',')) {
+      $p = $piece.Trim(); if (-not [string]::IsNullOrWhiteSpace($p)) { [void]$copyEntries.Add($p) }
+    }
+  }
+  $repoRootFull = [IO.Path]::GetFullPath($repoFull).TrimEnd('\')
+  foreach ($rel in $copyEntries) {
     $norm = $rel -replace '/', '\'
-    if ([IO.Path]::IsPathRooted($norm) -or $norm -match '(^|\\)\.\.(\\|$)') {
-      throw "CopyFile must be a relative path inside the repo: $rel"
+    if ($norm -match '(^|\\)\.\.(\\|$)') { throw "CopyFile may not contain '..': $rel" }
+    # An ABSOLUTE path INSIDE the repo is fine (resolve it to repo-relative); outside the repo is refused.
+    if ([IO.Path]::IsPathRooted($norm)) {
+      $abs = [IO.Path]::GetFullPath($norm)
+      if (($abs + '\').StartsWith($repoRootFull + '\', [StringComparison]::OrdinalIgnoreCase)) {
+        $norm = $abs.Substring($repoRootFull.Length).TrimStart('\')
+      } else {
+        throw "CopyFile absolute path is outside the repo (refused): $rel"
+      }
     }
     $src = Join-Path $repoFull $norm
     if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {

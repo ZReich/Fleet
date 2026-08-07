@@ -340,6 +340,11 @@ $script:DesignWorkspaceScopedTools = @('Write', 'Edit', 'Read', 'ReadMediaFile')
 # Repo copy-sandbox lane: read-only file tools scoped to the frozen archive snapshot.
 # Bare denys stay in place; scoped allows win first-match for paths under the sandbox.
 $script:RepoSandboxScopedTools = @('Read', 'Grep', 'Glob')
+# Benign, no-side-effect, no-path tools always allowed (any lane): they touch no FS/shell/web
+# and spawn nothing — the security boundary is write/shell/web/subagent, not the model's own
+# scratch planning. Failing a whole review lane over one of these discards good work (K3's
+# agent-core-v2 emits an internal TodoList the deny-config can't suppress). 2026-08-07.
+$script:KimiBenignAlwaysTools = @('TodoList')
 
 function Assert-NoReparsePointsInTree {
   # Belt-and-braces for repo-sandbox materialization: git archive cannot emit
@@ -901,7 +906,8 @@ try {
     }
     $toolEvidence += [pscustomobject]@{ name = [string]$call.name; copied_image_path = [bool]$inCopiedImageWorkspace; in_workspace = [bool]$inWorkspace; in_sandbox = [bool]$inSandbox; in_prompt_file = [bool]$inPromptFile }
     $callAllowed = $false
-    if ([string]$call.name -eq 'Read' -and $inPromptFile) { $callAllowed = $true }
+    if ($script:KimiBenignAlwaysTools -contains [string]$call.name) { $callAllowed = $true }
+    elseif ([string]$call.name -eq 'Read' -and $inPromptFile) { $callAllowed = $true }
     elseif ([string]$call.name -eq 'ReadMediaFile' -and $inCopiedImageWorkspace) { $callAllowed = $true }
     elseif ($ResearchSwarm -and ($script:ResearchSwarmAllowTools -contains [string]$call.name)) { $callAllowed = $true }
     elseif ($DesignWorkspace -and ($script:DesignWorkspaceScopedTools -contains [string]$call.name) -and $inWorkspace) { $callAllowed = $true }

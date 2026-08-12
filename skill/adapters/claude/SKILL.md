@@ -17,6 +17,12 @@ Fable/Opus/four-voice drift.
 ## Claude Surface Mapping
 
 - Sol writes the locked plan and returns for blind final verification/arbitration.
+  Sol PLANS, it does not explore (owner-codified 2026-08-12): the plan dispatch carries
+  a pre-assembled brief (`.fleet/context.md` — files + line refs, helpers, gate
+  commands, constraints, acceptance criteria) built by the Claude orchestrator or a
+  Spark lane first; effort `high` default, `xhigh` only for ambiguous/high-impact
+  designs. The planning lane is the run's critical-path head — every minute Sol spends
+  self-gathering context is serial wall-clock.
 - NO standing Terra supervisor lane on this surface (owner-codified 2026-08-12): the
   Claude root orchestrator IS the main loop and supervises directly — dispatch,
   liveness, integration, gates, and repair routing. A Terra supervisor here duplicates

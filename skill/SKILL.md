@@ -448,6 +448,15 @@ Add `.fleet/` to `.gitignore` when absent.
 
 ## Phase 2 - Wave Graph
 
+**Sol plans; Sol does not explore (owner-codified 2026-08-12 — the planning lane is the
+critical-path head; a 33-minute planner on fleet-rescomp was mostly self-serve context
+gathering).** The plan dispatch MUST carry a pre-assembled brief — the Phase 1
+`.fleet/context.md` (repo sha, relevant files + line refs, helpers to reuse, gate
+commands, constraints, acceptance criteria), built by the orchestrator/Spark BEFORE the
+Sol lane starts. A Sol plan prompt that says "look around the repo and plan" is a
+contract smell. Effort: `high` is the default; reserve `xhigh` for genuinely ambiguous
+or high-impact designs — do not pay xhigh latency for routine wave graphs.
+
 Dispatch one GPT-5.6 Sol planning session at high effort after the evidence brief,
 through the canonical `scripts/Invoke-Sol.ps1` wrapper (never raw `codex exec` for the Sol
 lane). The wrapper forces `-c model_reasoning_effort="high"` so Sol never inherits the

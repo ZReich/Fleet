@@ -3,11 +3,19 @@
 . (Join-Path $PSScriptRoot 'FleetLaneRefusal.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'FleetReceiptSignature.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'RunLease.Helpers.ps1')
+. (Join-Path $PSScriptRoot 'FleetReviewGrammar.Helpers.ps1')
 
 $script:KnownModelTokens = @('sol', 'terra', 'luna', 'opus', 'fable', 'glm', 'grok', 'kimi', 'gemini', 'spark')
 $script:OpenWeightKeys = @('glm', 'kimi', 'grok')
 $script:FleetVoiceMinBytes = 200
 $script:FleetVoiceSuccessStatuses = @('ok', 'done', 'passed')
+# Exact voice_key -> allowlisted transport (mismatch fails before dispatch).
+$script:FleetVoiceTransportMap = @{
+  'kimi' = 'Invoke-KimiK3'; 'glm' = 'Invoke-PiGlm'; 'grok' = 'Invoke-Grok45'
+  'sol' = 'Invoke-Sol'; 'terra' = 'Invoke-Sol'; 'luna' = 'Invoke-Sol'
+  'opus' = 'Invoke-Opus48'; 'fable' = 'Invoke-Sol'
+}
+$script:FleetIdGrammar = '^[A-Za-z0-9._-]+$'
 # PS 5.1 ConvertFrom-Json does not preserve order; rehydrate before HMAC shape check.
 $script:ReviewLaneFieldOrder = @(
   'schema_version','receipt_type','run_id','task_id','lane_id','voice_id','review_role',
@@ -16,6 +24,157 @@ $script:ReviewLaneFieldOrder = @(
   'review_tier','result_path','charter_sha256','result_sha256','exit_code','outcome',
   'refusal_reason','fallback_of','started_at','completed_at','sig_alg','key_id','signature'
 )
+
+function Test-FleetIdGrammar([string]$Value) {
+  if ([string]::IsNullOrWhiteSpace($Value)) { return $false }
+  return [bool]($Value -match $script:FleetIdGrammar)
+}
+
+function Test-FleetVoiceTransportBinding([string]$VoiceId, [string]$Transport) {
+  if ([string]::IsNullOrWhiteSpace($VoiceId) -or [string]::IsNullOrWhiteSpace($Transport)) {
+    return @{ Ok = $false; Reason = 'voice/transport blank'; VoiceKey = ''; Want = '' }
+  }
+  $vk = Get-VoiceModelKey $VoiceId
+  if ([string]::IsNullOrWhiteSpace($vk) -or -not $script:FleetVoiceTransportMap.ContainsKey($vk)) {
+    return @{ Ok = $false; Reason = ("voice not bound: {0}" -f $VoiceId); VoiceKey = $vk; Want = '' }
+  }
+  $want = [string]$script:FleetVoiceTransportMap[$vk]
+  if ($Transport -cne $want) {
+    return @{ Ok = $false; Reason = ("voice-transport mismatch: voice={0} key={1} transport={2} want={3}" -f $VoiceId, $vk, $Transport, $want); VoiceKey = $vk; Want = $want }
+  }
+  return @{ Ok = $true; Reason = ''; VoiceKey = $vk; Want = $want }
+}
+
+function Get-FleetContainedReceiptPath([string]$ReceiptDir, [string]$LeafName) {
+  if (-not (Test-FleetIdGrammar $LeafName)) {
+    throw ("receipt leaf grammar: {0}" -f $LeafName)
+  }
+  if ($LeafName.Contains([IO.Path]::DirectorySeparatorChar) -or $LeafName.Contains([IO.Path]::AltDirectorySeparatorChar)) {
+    throw ("receipt leaf not single-segment: {0}" -f $LeafName)
+  }
+  $dirFull = [IO.Path]::GetFullPath($ReceiptDir).TrimEnd('\', '/')
+  $combined = [IO.Path]::GetFullPath((Join-Path $dirFull $LeafName))
+  $parent = [IO.Path]::GetFullPath((Split-Path -Parent $combined)).TrimEnd('\', '/')
+  if ($parent -cne $dirFull) {
+    throw ("path escapes receipt dir: leaf={0} parent={1} want={2}" -f $LeafName, $parent, $dirFull)
+  }
+  return $combined
+}
+
+function Assert-FleetPathInReceiptDir([string]$ReceiptDir, [string]$TargetPath) {
+  if ([string]::IsNullOrWhiteSpace($TargetPath)) { throw 'target path blank' }
+  $dirFull = [IO.Path]::GetFullPath($ReceiptDir).TrimEnd('\', '/')
+  $full = [IO.Path]::GetFullPath($TargetPath)
+  $parent = [IO.Path]::GetFullPath((Split-Path -Parent $full)).TrimEnd('\', '/')
+  if ($parent -cne $dirFull) {
+    throw ("path escapes receipt dir: path={0} parent={1} want={2}" -f $TargetPath, $parent, $dirFull)
+  }
+  $leaf = Split-Path -Leaf $full
+  if (-not (Test-FleetIdGrammar $leaf)) { throw ("receipt leaf grammar: {0}" -f $leaf) }
+  return $full
+}
+
+function Assert-FleetSnapshotAncestorChain([string]$SnapshotPath, [string]$RuntimeRoot, [switch]$RequireSnapshot) {
+  # Inspect each entry itself, rather than resolving the complete path first: resolving
+  # would follow a malicious parent junction before we could reject it.
+  if ([string]::IsNullOrWhiteSpace($SnapshotPath) -or [string]::IsNullOrWhiteSpace($RuntimeRoot)) {
+    throw 'snapshot/runtime path blank'
+  }
+  $rootFull = [IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\', '/')
+  $snapFull = [IO.Path]::GetFullPath($SnapshotPath)
+  $prefix = $rootFull + [IO.Path]::DirectorySeparatorChar
+  if (-not $snapFull.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw ("snapshot escapes run runtime root: snapshot={0} root={1}" -f $snapFull, $rootFull)
+  }
+
+  $current = $snapFull
+  while ($true) {
+    if (Test-Path -LiteralPath $current) {
+      $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+      if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw ("snapshot ancestor reparse point forbidden: {0}" -f $current)
+      }
+    } elseif ($current -ceq $snapFull -and $RequireSnapshot) {
+      throw ("snapshot missing during dispatch verification: {0}" -f $snapFull)
+    } elseif ($current -cne $snapFull) {
+      throw ("snapshot ancestor missing: {0}" -f $current)
+    }
+    if ($current -ceq $rootFull) { break }
+    $parent = [IO.Path]::GetFullPath((Split-Path -Parent $current)).TrimEnd('\', '/')
+    if ($parent -ceq $current) { throw ("snapshot ancestor walk escaped runtime root: {0}" -f $current) }
+    $current = $parent
+  }
+  return $snapFull
+}
+
+function New-FleetCharterSnapshot([string]$SourcePath, [string]$SnapshotPath, [string]$RuntimeRoot) {
+  if (-not (Test-Path -LiteralPath $SourcePath -PathType Leaf)) {
+    throw ("charter source missing: {0}" -f $SourcePath)
+  }
+  $parent = Split-Path -Parent $SnapshotPath
+  if ($parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+  # Hold the source before reading it: these exact bytes are hashed and copied to the snapshot.
+  $source = [IO.File]::Open($SourcePath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+  $created = $false
+  $writer = $null
+  $snapshot = $null
+  try {
+    $bytes = New-Object byte[] $source.Length
+    $offset = 0
+    while ($offset -lt $bytes.Length) {
+      $read = $source.Read($bytes, $offset, $bytes.Length - $offset)
+      if ($read -le 0) { throw "charter read truncated: $SourcePath" }
+      $offset += $read
+    }
+    # Creation is short-lived: a durable write handle blocks ordinary FileShare.Read readers.
+    $writer = [IO.File]::Open($SnapshotPath, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    $created = $true
+    $writer.Write($bytes, 0, $bytes.Length)
+    $writer.Flush($true)
+    $writer.Dispose()
+    $writer = $null
+    # The write-close/read-open interval is protected by this path-chain check and the
+    # run-scoped exclusive runtime directory.  Verify it before reopening by path.
+    $null = Assert-FleetSnapshotAncestorChain -SnapshotPath $SnapshotPath -RuntimeRoot $RuntimeRoot -RequireSnapshot
+    # Hold read-only through transport: FileShare.Read admits readers, not writers/deleters.
+    $snapshot = [IO.File]::Open($SnapshotPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try {
+      $sb = New-Object Text.StringBuilder 64
+      foreach ($x in $sha.ComputeHash($snapshot)) { [void]$sb.Append($x.ToString('x2')) }
+      $charterSha = $sb.ToString()
+    } finally { $sha.Dispose() }
+    $snapshot.Position = 0
+  } catch {
+    if ($null -ne $writer) { $writer.Dispose(); $writer = $null }
+    if ($null -ne $snapshot) { $snapshot.Dispose(); $snapshot = $null }
+    if ($created -and (Test-Path -LiteralPath $SnapshotPath -PathType Leaf)) { Remove-Item -LiteralPath $SnapshotPath -Force -ErrorAction SilentlyContinue }
+    throw
+  } finally { $source.Dispose() }
+  # Do not return the hash separately: callers must retain this exact held stream.
+  return [pscustomobject]@{ CharterSha256 = $charterSha; Hold = $snapshot }
+}
+
+function Write-FleetCreateNewAtomic([string]$Path, [string]$Text, $Encoding) {
+  $parent = Split-Path -Parent $Path
+  if ($parent -and -not (Test-Path -LiteralPath $parent -PathType Container)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+  $tmp = $Path + '.partial.' + [guid]::NewGuid().ToString('n')
+  try {
+    $fs = [IO.File]::Open($tmp, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+    try {
+      $b = $Encoding.GetBytes($Text)
+      $fs.Write($b, 0, $b.Length)
+    } finally { $fs.Dispose() }
+    [IO.File]::Move($tmp, $Path)
+  } catch {
+    if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    throw
+  }
+}
 
 function ConvertTo-OrderedReviewReceipt($Obj) {
   if ($null -eq $Obj) { return $null }
@@ -38,41 +197,8 @@ function Get-VoiceModelKey([string]$ModelOrStem) {
   return $lower
 }
 
-function Get-FileSha256Hex([string]$Path) {
-  $sha = [Security.Cryptography.SHA256]::Create()
-  try {
-    $fs = [IO.File]::OpenRead($Path)
-    try { return -join ($sha.ComputeHash($fs) | ForEach-Object { $_.ToString('x2') }) }
-    finally { $fs.Dispose() }
-  } finally { $sha.Dispose() }
-}
 
-# Exact lane/voice identity only — no prefix (v-glm must not match v-glm-security).
-function Test-SecurityVoiceReceiptBound([string]$VoicePath, [string]$VoiceName, [object[]]$Receipts) {
-  if (-not (Test-Path -LiteralPath $VoicePath -PathType Leaf)) { return $false }
-  $stem = [IO.Path]::GetFileNameWithoutExtension($VoiceName)
-  $full = [IO.Path]::GetFullPath($VoicePath)
-  $wantSha = (Get-FileSha256Hex $VoicePath).ToLowerInvariant()
-  foreach ($r in @($Receipts)) {
-    if ($null -eq $r) { continue }
-    $lane = ''; $vid = ''; $rsha = ''; $rpath = ''
-    if ($r.PSObject.Properties['lane_id']) { $lane = [string]$r.lane_id }
-    if ($r.PSObject.Properties['voice_id']) { $vid = [string]$r.voice_id }
-    if ($r.PSObject.Properties['result_sha256']) { $rsha = ([string]$r.result_sha256).ToLowerInvariant() }
-    if ($r.PSObject.Properties['result_path']) { $rpath = [string]$r.result_path }
-    if (-not ($lane -ceq $stem -or $lane -ceq $VoiceName -or $vid -ceq $stem -or $vid -ceq $VoiceName)) { continue }
-    if ($rsha -eq $wantSha) { return $true }
-    if (-not [string]::IsNullOrWhiteSpace($rpath)) {
-      try { if ((Test-Path -LiteralPath $rpath -PathType Leaf) -and ([IO.Path]::GetFullPath($rpath) -eq $full)) { return $true } } catch { }
-    }
-  }
-  return $false
-}
 
-function Test-SignedSecurityRole($Receipt) {
-  if ($null -eq $Receipt -or -not $Receipt.PSObject.Properties['review_role']) { return $false }
-  return ([string]$Receipt.review_role -ceq 'security-review')
-}
 
 function Test-FleetVoiceContent([string]$Name, [string]$Text, [int64]$Bytes, [bool]$IsSecurityRole = $false) {
   if ($Bytes -lt $script:FleetVoiceMinBytes) { return "too small ($Bytes < $($script:FleetVoiceMinBytes) bytes)" }
@@ -89,11 +215,16 @@ function Test-FleetVoiceContent([string]$Name, [string]$Text, [int64]$Bytes, [bo
     $body = ''; if ($obj.PSObject.Properties['response']) { $body = [string]$obj.response }
     if ([string]::IsNullOrWhiteSpace($body) -and $obj.PSObject.Properties['verdict']) { $body = [string]$obj.verdict }
     if ([string]::IsNullOrWhiteSpace($body)) { return 'json missing nonempty response/verdict' }
+    # JSON envelopes get NO grammar bypass (Sol H2 2026-08-11): the extracted response must
+    # satisfy the same single-source verdict grammar as markdown voices.
+    $parsedJson = Parse-FleetReviewVerdict $body
+    if (-not $parsedJson.valid) { return ('verdict grammar invalid: ' + (@($parsedJson.errors) -join '; ')) }
     $bodyForSub = $body
   } else {
-    if ($Text -match '(?i)\b(CRITICAL|HIGH|MEDIUM|LOW)\b') { }
-    elseif ($Text -match '(?i)\b(no findings|none material|zero findings|no material findings)\b') { }
-    else { return 'markdown lacks severity token or no-findings statement' }
+    # Single-source grammar (FleetReviewGrammar.Helpers.ps1): the charter builder pastes the
+    # exact grammar this parser enforces, so a failure here is a re-dispatchable defect.
+    $parsed = Parse-FleetReviewVerdict $Text
+    if (-not $parsed.valid) { return ('verdict grammar invalid: ' + (@($parsed.errors) -join '; ')) }
   }
   # Security-review: bare severity alone is not a completed review.
   if ($IsSecurityRole -and -not (Test-FleetLaneReviewSubstance -Text $bodyForSub)) {

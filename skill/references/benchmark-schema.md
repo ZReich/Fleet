@@ -1,5 +1,14 @@
 # Grok benchmark record v7
 
+## Worktree-pool lifecycle telemetry
+
+`%USERPROFILE%\.codex\fleet\worktree-pool.jsonl` emits one schema-versioned JSON object per
+pool lifecycle event. `acquire_complete` and `release_complete` are mandatory; an append
+failure is visible to the caller and makes its lifecycle command nonzero. Pool rows use
+`event`, `outcome`, `reason`, `repo_key`, `slot_id`, `run_id`, `branch`, `base_sha`,
+`ownership`, `wait_ms`, `duration_ms`, `registered_worker_count`, and `quarantine_reason`.
+They must not contain `lease_id`, environment contents, prompts, tokens, command output, or secrets.
+
 Use one JSON object per primary/shadow task. Keep exclusions and no-contests;
 never count them as losses. `result` compares worker-final candidates before the
 five-voice integration review. The selected pre/post fields measure that later
@@ -186,6 +195,18 @@ rows stay readable; new rows SHOULD emit v8. `Record-GrokBenchmark.ps1` accepts 
    `optimized_system` runs each model in its strongest native harness (e.g. the
    asymmetric `grok_review_only`); operationally useful, **banned from the leaderboard**.
    Relabel existing asymmetric rows `optimized_system`.
+
+   **Declared-treatment exception (added 2026-08-10, run `fleet-grok-effort-ab-20260810`).**
+   A controlled A/B whose ENTIRE purpose is to vary one harness dimension is still
+   `standardized_model`, provided the varied dimension is declared up front and every other
+   dimension in the list above is held identical. Such a row MUST carry:
+   `treatment_variable` (exactly one of `effort` | `model` | `tools` | `context` | `harness`),
+   `control` (the value the current default uses), and `treatment` (the value under test).
+   Rows with a `treatment_variable` are comparable only to rows sharing the SAME
+   `treatment_variable`; they never pool with unrestricted `standardized_model` rows and
+   never feed a cross-model leaderboard — an effort A/B measures a knob, not a model.
+   Two or more varied dimensions is NOT this exception: that is `optimized_system`.
+   Omitting `treatment_variable` while arms differ is a mislabeled row, not a shortcut.
 3. **Sampling provenance.** `sampling_policy` (`auto|explicit|none`), `sample_seed`,
    `selection_probability`, `task_stratum` (`mechanical|standard|hard|review`),
    `shadow_origin`, `shadow_mode` (`post_hoc_async|in_band_explicit`),

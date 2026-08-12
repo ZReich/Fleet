@@ -32,9 +32,23 @@ $script:FrsMS = @(
   @{n='model';k='s'},@{n='sig_alg';k='c';v='HMAC-SHA256'},@{n='signature';k='sig'}
 )
 
+# lane_gate: a Grok implementation lane's gate attestation. Scalar-only (no finding/str arrays),
+# so it uses the existing canonicalizer + scalar writer unchanged. Binds the lane's claimed gate
+# outcome to the run, the diff (input_packet_sha256), and the result file (result_sha256), signed
+# with the lease key so grok's self-reported gate result is identity-bound + tamper-evident.
+$script:FrsLG = @(
+  @{n='schema_version';k='c';v='2'},@{n='receipt_type';k='c';v='lane_gate'},
+  @{n='run_id';k='id'},@{n='task_id';k='id'},@{n='lane_id';k='id'},
+  @{n='requested_model';k='s'},@{n='observed_model';k='s'},@{n='model_evidence';k='s'},@{n='emitter_id';k='id'},
+  @{n='input_packet_sha256';k='sha'},@{n='result_sha256';k='sha'},@{n='locked_plan_sha256';k='sha'},
+  @{n='cheap_gate';k='s'},@{n='cheap_gate_claim';k='s'},@{n='exit_code';k='i'},@{n='outcome';k='s'},
+  @{n='started_at';k='ts'},@{n='completed_at';k='ts'},
+  @{n='sig_alg';k='c';v='HMAC-SHA256'},@{n='key_id';k='kid'},@{n='signature';k='sig'}
+)
 function Get-FrsSchema([string]$t) {
   if ($t -ceq 'review_lane') { $script:FrsRL; return }
   if ($t -ceq 'merge_stage') { $script:FrsMS; return }
+  if ($t -ceq 'lane_gate') { $script:FrsLG; return }
   $null
 }
 function Get-FrsNames($o) { @($o.PSObject.Properties | ForEach-Object { $_.Name }) }
@@ -276,4 +290,42 @@ function Test-FleetReceiptSignature {
     return (New-FrsRes $false 'bad_signature')
   }
   New-FrsRes $true 'ok'
+}
+
+# Receipt-binding predicates (moved from FleetReviewVoice.Helpers.ps1 -- receipt-shape logic
+# lives with the signature helpers).
+function Get-FileSha256Hex([string]$Path) {
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    $fs = [IO.File]::OpenRead($Path)
+    try { return -join ($sha.ComputeHash($fs) | ForEach-Object { $_.ToString('x2') }) }
+    finally { $fs.Dispose() }
+  } finally { $sha.Dispose() }
+}
+
+# Exact lane/voice identity only — no prefix (v-glm must not match v-glm-security).
+function Test-SecurityVoiceReceiptBound([string]$VoicePath, [string]$VoiceName, [object[]]$Receipts) {
+  if (-not (Test-Path -LiteralPath $VoicePath -PathType Leaf)) { return $false }
+  $stem = [IO.Path]::GetFileNameWithoutExtension($VoiceName)
+  $full = [IO.Path]::GetFullPath($VoicePath)
+  $wantSha = (Get-FileSha256Hex $VoicePath).ToLowerInvariant()
+  foreach ($r in @($Receipts)) {
+    if ($null -eq $r) { continue }
+    $lane = ''; $vid = ''; $rsha = ''; $rpath = ''
+    if ($r.PSObject.Properties['lane_id']) { $lane = [string]$r.lane_id }
+    if ($r.PSObject.Properties['voice_id']) { $vid = [string]$r.voice_id }
+    if ($r.PSObject.Properties['result_sha256']) { $rsha = ([string]$r.result_sha256).ToLowerInvariant() }
+    if ($r.PSObject.Properties['result_path']) { $rpath = [string]$r.result_path }
+    if (-not ($lane -ceq $stem -or $lane -ceq $VoiceName -or $vid -ceq $stem -or $vid -ceq $VoiceName)) { continue }
+    if ($rsha -eq $wantSha) { return $true }
+    if (-not [string]::IsNullOrWhiteSpace($rpath)) {
+      try { if ((Test-Path -LiteralPath $rpath -PathType Leaf) -and ([IO.Path]::GetFullPath($rpath) -eq $full)) { return $true } } catch { }
+    }
+  }
+  return $false
+}
+
+function Test-SignedSecurityRole($Receipt) {
+  if ($null -eq $Receipt -or -not $Receipt.PSObject.Properties['review_role']) { return $false }
+  return ([string]$Receipt.review_role -ceq 'security-review')
 }

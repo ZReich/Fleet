@@ -396,6 +396,16 @@ try {
 }
 finally { Remove-Item -LiteralPath $artifactRoot -Recurse -Force -ErrorAction SilentlyContinue }
 
+# L321c: GLM must be pinnable to a worktree and record which tree it read (source-shape
+# guard -- the resolve/warn path needs a live Pi to exercise, so lock the fix in source).
+$glmSrc = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'Invoke-PiGlm.ps1')
+Assert-True (
+  ($glmSrc -match '\[string\]\$WorkingDirectory') -and
+  ($glmSrc -match 'working_directory\s*=') -and
+  ($glmSrc -match 'working_tree_branch\s*=') -and
+  ($glmSrc -match 'L321c')
+) "L321c: -WorkingDirectory param + tree identity recorded + wrong-tree guard present"
+
 Write-Host ""
 Write-Host "Offline: $($script:Pass) passed, $($script:Fail) failed"
 

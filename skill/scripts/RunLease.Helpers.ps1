@@ -22,6 +22,33 @@ function Test-FleetLeaseReclaimable($lease, [datetimeoffset]$now, [int]$staleHou
   return $false
 }
 
+# Janitor-only liveness-read: reclaim ONLY when owner is CONCLUSIVELY dead.
+# Fresh heartbeat = LIVE (transient shells leave dead PIDs with live runs).
+# Missing/invalid PID, access denied, enum failure, or stale HB + live/unknown PID = LIVE.
+# Does NOT change Enter/Renew/Exit reclaim semantics (use Test-FleetLeaseReclaimable there).
+function Test-FleetOwnerConclusivelyDead($lease, [datetimeoffset]$now, [int]$staleHours) {
+  try {
+    $hb = $null
+    try { $hb = [datetimeoffset]$lease.heartbeat_at } catch { }
+    # Absence is not evidence of staleness.  Janitor deletion needs positive proof of
+    # BOTH a parseable stale heartbeat and a dead owner PID.
+    if ($null -eq $hb) { return $false }
+    # Fresh heartbeat is positive liveness evidence even when owner PID is already dead.
+    if ($hb.AddHours($staleHours) -gt $now) { return $false }
+    $leasePid = 0
+    try { $leasePid = [int]$lease.owner_pid } catch { return $false }
+    if ($leasePid -le 0) { return $false }
+    try {
+      $proc = Get-Process -Id $leasePid -ErrorAction Stop
+      if ($null -ne $proc) { return $false }
+      return $false
+    } catch {
+      if ($_.CategoryInfo.Category -eq 'ObjectNotFound') { return $true }
+      return $false
+    }
+  } catch { return $false }
+}
+
 # 32-byte CSPRNG secret + independent 16-byte key id (32 lowercase hex). Never log/return secret.
 # Returns a single PSCustomObject (not a bare hashtable) so pipeline assignment never
 # enumerates DictionaryEntry rows into the caller's stdout capture.

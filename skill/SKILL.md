@@ -17,9 +17,14 @@ model families so no model grades its own work, run the independent parts in par
 and call nothing done until the evidence says so. What follows is that methodology on
 the Codex surface.
 
-Run the fleet from Codex without requiring Claude Code, Opus, or Fable for execution.
+Codex ORCHESTRATES the fleet — Claude Code is not required as a driver.
+That is a statement about the DRIVER, never a license to drop model voices: "Codex-native"
+does not mean "Codex-only". Every lane the selected tier names still dispatches through
+its canonical wrapper, and a Codex model implementing inline instead of dispatching the
+named lane is a contract violation, not a shortcut.
 GPT-5.6 Sol plans and returns for final verification. GPT-5.6 Terra supervises
-execution. Claude Opus 5 is the Opus final-review voice (Opus 4.8 = fallback).
+execution — supervises, does not implement. Claude Opus 5 is the Opus final-review voice
+(Opus 4.8 = fallback).
 
 Use Grok 4.5 as the default implementer for non-design work. Give it one cohesive
 charter; split only independent boundaries or measured context/tool bottlenecks
@@ -87,6 +92,13 @@ an independent voice; it is the exact claim the review exists to check.
   from `scripts/Assert-FleetMergeReadiness.ps1 -ReceiptDir <dir> -RunId <id>
   -ExpectedPacketSha256 <hex>` (same "missing line = did not run" rule as Fallow /
   filesize / lane-spans).
+- Any review, completion, approval, or merge-readiness claim MUST run
+  `Assert-FleetReviewCertification.ps1` last and quote its `certification:` line plus every
+  reducer line it re-emits. Unless the last line says `certification: CERTIFIED`, the
+  response MUST begin `UNCERTIFIED —` and MUST NOT say done, complete, approved, passed,
+  mergeable, ready to merge, or ready to push. Missing packet manifest, READY preflight,
+  signed-v2 receipt, expected span, effective manifest, or reducer line is UNCERTIFIED.
+  Native/ad-hoc/self-review never substitutes.
 
 The adversarial review is a STANDING step after every coding/fix/config wave — not
 something the user has to ask for, and not optional because tests are green. Runs that
@@ -110,6 +122,17 @@ Implementation default for non-design work is Grok 4.5 via `Invoke-Grok45.ps1` (
 cohesive charter + one structured self-review) — NOT Terra implementing inline. Design,
 API, and architecture judgment route to Sol and never to Grok. A down voice is
 substituted (GLM cross-family) and recorded `voice_substituted`, never silently dropped.
+
+TEST-AUDIT lane (2026-08-07): when a STANDARD/FULL review's diff touches `*.test.*` /
+`*.spec.*`, dispatch `[GROK · TEST-AUDIT]` CONCURRENTLY with the panel — it judges TEST
+quality (tautology, mock-of-subject, over-mock, duplicate, weak assertion, boundary),
+not code. It is ADVISORY and NEVER gates: `Read-FleetTestAuditVerdict.ps1` exits 0
+regardless, its REJECT/WARN surface as comments, and only a human or a Stryker survivor
+flips GO->NO-GO. Structural checks (missing `expect`, conditional expect) belong to
+`@vitest/eslint-plugin`, not the LLM — LLM nominates, deterministic tools dispose. Same
+two scripts drive a whole-corpus SWEEP that ranks every test delete/strengthen/keep (the
+"clean out the trash" run). Recipe, rubric, and cost rules:
+[references/test-audit-lane.md](references/test-audit-lane.md).
 Every dispatched lane is a visible model-first labeled task. See Routing for the full table.
 
 ### Plans are maximally parallel by default
@@ -138,6 +161,17 @@ anti-serialization validation gate.
 - Sol is plan + final verdict by default. If Sol (or any voice) times out as a
   review voice, substitute instantly (Terra or GLM, labeled `voice_substituted`)
   and let the round complete — never hold a round waiting on a dead voice.
+- **Efficiency contract (Sol-locked 2026-08-11 — [references/review-efficiency.md](references/review-efficiency.md)):**
+  charters come ONLY from `scripts/New-FleetReviewCharter.ps1` (embeds the single-source
+  verdict grammar of `FleetReviewGrammar.Helpers.ps1`); lint the packet with
+  `scripts/Test-FleetReviewPacketReady.ps1` BEFORE dispatching any voice (a BLOCKED packet
+  costs zero tokens); round N+1 re-dispatches ONLY finding/refused/failed lanes — signed GO
+  receipts carry forward on an IDENTICAL `input_packet_sha256` (all-or-none, recorded via
+  `scripts/New-FleetReviewRound.ps1`); packet lint failures, packet rebuilds, grammar
+  normalization, and pure transport failures do NOT consume the 3-round budget — only rounds
+  where a voice produced a completed/refused signed receipt count. Never re-prompt a model to
+  clarify a malformed verdict: the deterministic legacy-GO alias or full redispatch, nothing
+  in between.
 
 ## Performance discipline (2026-08-06 — from the long-run retrospective)
 
@@ -149,9 +183,13 @@ the Definition of Done.
    PS lane on 2026-08-05/06 shipped a runtime bug (var-collision, `[string]$null`→"", `${var}:`,
    null-vs-empty, `-replace` key corruption). MANDATORY: every charter producing a `.ps1` PASTES
    [references/ps51-footguns.md](references/ps51-footguns.md) and requires a self-check against it;
-   the orchestrator runs `Parser::ParseFile` + the script's `-SelfTest` and bounces failures BEFORE
-   marking the lane done. A "parses clean" self-report is not proof. Prefer dispatching PS-heavy
-   Grok work with `-IsolatedWorktree -BashCapability Auto` so Grok runs its own self-test first.
+   the orchestrator runs the deterministic gate `scripts/Assert-FleetPowerShellValid.ps1 -BaseRef <base>`
+   (AST parse-checks EVERY changed `.ps1` and RUNS each companion `Test-*.ps1` / `-SelfTest`; quote its
+   `psvalid: N parse errors, M test failures ...` line as gate evidence) and bounces failures BEFORE
+   marking the lane done. A "parses clean" self-report is not proof; a `.ps1` self-report with no
+   `psvalid:` line means the gate did not run. Dispatch PS-heavy Grok work with
+   `-IsolatedWorktree -BashCapability Auto` so Grok runs that same gate on its own slice first --
+   the PS analog of the tsc rule: eyeballing ps51-footguns is not running the script.
 
 2. **A new gate CHECK owns ALL its fixtures.** When a charter adds a validation check (result-file
    hash, signature, packet/plan binding), its write-scope MUST include every harness/fixture/emitter
@@ -260,11 +298,21 @@ GLM transport in this Codex workflow.
 3. Read `$env:USERPROFILE/.codex/fleet/cli-update-status.json`. The daily
    automation refreshes it for Codex (runs Sol/Terra/Luna), Grok, Claude, Pi, Antigravity, and Kimi Code.
    Codex was previously unaudited even though it runs every Sol/Terra lane; track it now. The
-   codex row must also assert the model-catalog schema: if `codex exec` logs
-   `failed to renew cache TTL: missing field 'supports_reasoning_summaries'`, the installed
+   codex row must also assert the model-catalog schema: `codex exec` logging
+   `failed to renew cache TTL: missing field 'supports_reasoning_summaries'` means the installed
    codex-cli lags the server catalog schema and every Sol/Terra run falls back to embedded
-   defaults + re-fetches (looks like a slow/degraded Sol). Remediate via the leased CLI-update
-   flow, not an in-place npm update. If missing, invalid,
+   defaults + re-fetches (looks like a slow/degraded Sol). This is RESOLVED as of 2026-08-07:
+   the real cause is a version-STAMP fight, not a bad build or a schema-lagging pin — codex writes
+   its own version into `models_cache.json` and refetches every run, and the renew-error fires only
+   when a codex of a DIFFERENT version re-stamped the SHARED cache (a version bump never cured it).
+   DEFINITIVE FIX (2026-08-08): `Invoke-Sol.ps1` gives every lane its OWN `CODEX_HOME` via
+   `New-CodexLaneHome.ps1` (copies auth+config, unique per launch), so the lane's cache is written
+   only by the pinned codex — always self-stamped, never a renew-error — AND no two lanes touch the
+   same file (kills the parallel write race too). Proven: 4 concurrent Sol lanes all `skew=false`,
+   shared `~/.codex/models_cache.json` untouched. Terra lanes dispatched via raw `codex exec` should
+   likewise set `CODEX_HOME` from `New-CodexLaneHome.ps1`. `Repair-CodexModelsCache.ps1` remains as a
+   heal for any NON-isolated codex use (interactive/foreign) but is no longer on the Sol path. If
+   skew ever reappears, a lane launched a foreign codex WITHOUT an isolated home. If missing, invalid,
    schema-incompatible, timestamped in the future, or older than 24 hours, run the
    same read-only checks before dispatch. Never replace an executable in place or
    enable background binary updates. When an update target is reported, validate a
@@ -404,9 +452,12 @@ Dispatch one GPT-5.6 Sol planning session at high effort after the evidence brie
 through the canonical `scripts/Invoke-Sol.ps1` wrapper (never raw `codex exec` for the Sol
 lane). The wrapper forces `-c model_reasoning_effort="high"` so Sol never inherits the
 config default (`xhigh`, which reads as a hang), resolves the codex launcher deterministically
-(codex lives in the nvm node dir, not on PATH), kills a 0-turn hang the way `Invoke-Grok45`
-does, and surfaces the model-cache schema skew instead of letting it pass silently. Use
-`-Effort xhigh` only for ambiguous/high-impact design, architecture, API, or security work.
+(approved-pin hop → codex-0.146.1; codex lives in the nvm node dir, not on PATH), kills a
+0-turn hang the way `Invoke-Grok45` does, and gives the lane its OWN `CODEX_HOME`
+(`New-CodexLaneHome.ps1`) so the model cache is never shared — killing both the skew and the
+parallel write race at the source (4 concurrent Sol lanes proven skew-free). Pass the brief with `-PromptFile`
+(Bash-tool-safe) or `-Prompt`. Use `-Effort xhigh` only for ambiguous/high-impact design,
+architecture, API, or security work.
 In the same call, require `selected_mode`, matched triggers, rationale, and automatic
 escalation conditions using [references/mode-selection.md](references/mode-selection.md).
 Do not spend a separate call on classification. Record its session ID and write its locked plan to
@@ -480,7 +531,9 @@ the Codex sidebar truncates long task names.
   lowercase snake case required by `spawn_agent`, for example:
   `grok45_implementer_t4_ingest_integration`,
   `gpt56terra_fallback_t4_ingest_integration`, and
-  `glm52_review_t4_edge_contracts`.
+  `glm52_review_t4_edge_contracts`. This `<model><role>_t<n>_<slug>` form
+  (`^[a-z][a-z0-9_]*$`, model + role + `t<n>` mandatory) is the AUTHORITATIVE compliant
+  fallback on any surface that cannot render the bracket label (Sol-locked 2026-08-11).
 - Display every task, update, heartbeat, log heading, and final-report row as
   `[MODEL · ROLE] T# — action`, for example
   `[GROK 4.5 · IMPLEMENTER] T4 — Ingest integration`.
@@ -575,6 +628,12 @@ Lane-span contract (hard gate): every lane completion MUST be recorded with
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\Record-FleetLaneSpan.ps1 -RecordPath .fleet\T1-lane-span.json -OutputPath BENCH-lanes.jsonl
 ```
 
+Runs that buffer spans in per-run files (worktree/committed flows) MUST publish them to the
+shared ledger with `scripts/Publish-FleetRunSpans.ps1 -RunId <id> -SpanDir <dir>
+-ExpectedLanes <ids>` BEFORE the lane-span gate — never from lease cleanup (both 2026-08-11
+runs skipped this and the shared ledger got zero rows). Identical replay is a no-op;
+conflicts fail.
+
 A run is NOT complete until `scripts/Assert-FleetLaneSpans.ps1 -RunId <id>
 -LedgerPath BENCH-lanes.jsonl -ExpectedLaneManifest <path>` passes and its summary line
 (`lane-spans: <run> | expected: N | valid: V | missing: M | duplicate: D |
@@ -649,10 +708,51 @@ Do not impose a global file-count or diff-line ceiling on Grok. Sol sets a
 task-specific scope around one cohesive invariant and records its expected size.
 Split only when boundaries are genuinely independent or measured context/tool
 friction makes the combined charter slower; do not split merely because a wave is
-large. Grok runs the smallest focused tests that exercise its branch. Do not assign
-it full suites, package builds/typechecks, lint, or Fallow; Terra/Codex owns those
-once per barrier. This keeps Grok's self-review substantive without paying twice
-for manager-reproducible gates or extra orchestration waves.
+large. Grok 1.0.0's sandbox is reliable inside an isolated worktree (terminal proof
+passes, writes contained, self-verification works -- fleet-parstress/clipins), so an
+isolated Grok impl lane now SELF-VERIFIES by default: it runs the tests that exercise
+its branch AND the touched package's build/typecheck, reads the failures, and fixes
+them so it hands off green (Invoke-Grok45 defaults bash + subagents + web ON for
+`-IsolatedWorktree` non-Review lanes). What Grok should NOT do every pass: re-run the
+ENTIRE monorepo suite, lint, or Fallow -- Terra/Codex still owns the authoritative
+full-suite + lint + Fallow pass ONCE per barrier (the source of truth). This is not
+paying twice for the same signal: it moves the cheap catch (compile/type/build errors)
+onto the cheap model so they never reach the expensive blind panel, and the barrier
+still re-verifies. Safety rails are unchanged: bash only in an isolated worktree, no
+nested-agent spawns (codex/grok/claude), no MCP, locked write scope.
+
+BARRIER VERIFICATION MODE (adds only seconds), the full wired flow:
+  a. Grok impl lane completes and writes its result JSON (self-verified: it ran its own
+     build/typecheck + focused tests under the freedom defaults above).
+  b. Orchestrator-side (holds the ACL-locked lease key; the sandboxed lane does NOT),
+     `scripts/New-FleetLaneReceipt.ps1 -RunId <id> -GrokResult <json> -BaseRef <base>
+     -OutputPath <receipt>` mints a SIGNED `lane_gate` receipt binding grok's claimed
+     outcome to the run + the diff (input_packet_sha256) + the result file (result_sha256).
+  c. `scripts/Assert-FleetLaneReceipt.ps1 -GrokResult <json> -BaseRef <base>
+     -ReceiptPath <receipt> -RunId <id> -DivergenceLedger <jsonl>` then
+     (1) verifies the receipt's HMAC signature (identity + tamper-evidence), (2) re-runs the CHEAP DETERMINISTIC gate in full (psvalid /
+changed-file tsc -- seconds) and compares to the lane's claimed outcome, (3) flags
+DIVERGENCE + fails closed if the lane reported success but the cheap gate fails on re-run,
+appending a claim-vs-reality row to a divergence ledger. The EXPENSIVE full suite/build is
+TRUSTED from the lane's report -- NOT because a signature proves gate truth (it does not:
+Test-FleetGateReceiptTrust.ps1 shows a valid signed receipt CAN carry a false green), but
+because the cheap re-run corroborates the lane's honesty and the divergence ledger tracks
+it. As long as the divergence rate stays 0 (grok 1.0.0 has matched the barrier 100% so
+far), sample the expensive gates less; ANY divergence means that lane/run is untrustworthy
+-> revert to a full re-run. This is the safe way to skip the expensive re-run (the real
+time cost) without blind-trusting a possibly-lying lane. Quote its `lanegate: ...` line.
+
+HARD MINIMUM (learned fleet-mp-unify-20260806): a Grok lane that CREATES or heavily
+rewrites a TypeScript file MUST at least run a single-file `tsc --noEmit` on that file
+(compiler-only) and
+paste the exit code in its self-check. Focused vitest does NOT typecheck, so a lane
+can report green (118/118) while handing off a file that does not compile — that run
+shipped 5 TS2339 errors into the review wave, which then burned a dedicated repair
+round (Ru1) doing nothing but making the new file compile. A single-file `tsc
+--noEmit` is cheap (no monorepo build), catches exactly that class at the lane, and
+a build lane's task_status MUST NOT be `done` if it authored a new .ts file it never
+compiled. The barrier still owns the full package build/typecheck; this only stops a
+known-non-compiling handoff from reaching the expensive blind panel.
 
 Terra and Luna are implementation fallback lanes, not routine implementers or paired shadows. Escalate
 only after Grok fails its static self-review plus one evidence-backed gate-repair attempt,
@@ -817,13 +917,17 @@ alone are not an energy measurement.
 Always redirect stdin from null. Prefer prompt files over quoted prompt arguments.
 
 The Sol lane (plan / design / architecture / security) goes through its wrapper, not raw
-`codex exec` — the wrapper forces effort, resolves the launcher, guards the 0-turn hang, and
-reports the model-cache skew:
+`codex exec` — the wrapper forces effort, resolves the launcher (approved-pin hop), guards the
+0-turn hang, and isolates the lane's `CODEX_HOME` (`New-CodexLaneHome.ps1`) so no model-cache skew
+or parallel write race is possible (see the codex row in Phase 0). Prefer `-PromptFile` — it reads the
+brief straight from a file so the dispatch runs from the Bash tool without the PowerShell
+`(Get-Content -Raw …)` sub-expression, which the Bash tool eval-parses and errors on:
 
 ```powershell
-# canonical Sol dispatch (reads the brief from a prompt file; Mode json for structured capture)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\fleet\scripts\Invoke-Sol.ps1" -Prompt (Get-Content -Raw .fleet/plan-brief.txt) -Effort high -Sandbox read-only -Mode json -TimeoutSeconds 1200
-# preflight liveness + model-resolution probe (proves gpt-5.6-sol still resolves):
+# canonical Sol dispatch — -PromptFile is Bash-tool-safe (mirrors Invoke-Grok45 / Invoke-Opus48)
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\fleet\scripts\Invoke-Sol.ps1" -PromptFile .fleet/plan-brief.txt -Effort high -Sandbox read-only -Mode json -TimeoutSeconds 1200
+# (-Prompt (Get-Content -Raw …) still works from the PowerShell tool; -PromptFile is preferred everywhere)
+# preflight liveness + model-resolution probe (proves gpt-5.6-sol still resolves, skew=false):
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$env:USERPROFILE\.codex\skills\fleet\scripts\Invoke-Sol.ps1" -Probe -Mode json
 ```
 
@@ -974,8 +1078,9 @@ Review/read-only prompts must request free-form Markdown and must not demand the
 - Checkpoint before each wave: `git stash create "fleet-wave-N"` and log the sha.
 - Workers self-check their own slice only.
 - Terra orchestrator runs wave gates once: typecheck, tests, lint/build as relevant, Fallow,
-  diff review against acceptance criteria, and one real user-path probe for
-  user-facing behavior. An equivalent-looking alternate path is not proof.
+  `Assert-FleetPowerShellValid` when any `.ps1` changed (parse + self-test — a `.ps1` diff with
+  no `psvalid:` line did not gate), diff review against acceptance criteria, and one real
+  user-path probe for user-facing behavior. An equivalent-looking alternate path is not proof.
 - Serialize full test-suite runs. Parallel workers run only scoped checks.
 - For live/provider/browser acceptance, freeze the failing matrix after two
   consecutive repair cycles or when a failure reveals a new architecture/data-contract
@@ -1052,6 +1157,12 @@ Review/read-only prompts must request free-form Markdown and must not demand the
   NEVER anywhere under `Documents\`. Sibling worktrees buried the owner's Documents
   folder in 30+ `Harken-v2-*` dirs (caught 2026-07-22). Remove the worktree AND its
   directory at run end; a run is not complete while its worktree remains.
+- WORKTREE POOL EXCEPTION: Run-owned worktrees must be removed at run end.
+  Pool-owned slots must remain registered (sanitize+`ready` or ownership-cleared
+  `quarantined`; no live registered worker). Presence of a pool-owned slot is not incomplete;
+  an `acquired`, `preparing`, or live-worker slot is incomplete. Authority:
+  [references/worktree-pool.md](references/worktree-pool.md). Never recursively
+  delete a pool slot.
 - Before removing a Windows worktree, inspect for junctions with
   `Get-ChildItem -Recurse -Attributes ReparsePoint`; remove junctions themselves
   before `git worktree remove`. Never recursively delete a worktree path. For a
@@ -1119,7 +1230,9 @@ Codex `-o` writes the final answer while live events may appear on stderr. The P
 wrapper uses print mode so cumulative event bodies never exist in its output;
 never bypass it or request raw Pi JSONL.
 End of run: kill only worker processes this fleet started, then verify with a
-process list. Verify worktree cleanup with `git worktree list`. Run
+process list. Verify worktree cleanup with `git worktree list` — run-owned trees
+gone; pool-owned slots may remain registered (see WORKTREE POOL EXCEPTION /
+[references/worktree-pool.md](references/worktree-pool.md)). Run
 `scripts/Assert-FleetLaneCompletion.ps1 -LaneDir .fleet [-DeliverableDir <dirs>]`
 and quote its summary line (`lanes: N audited, X ok, ...`) in the final report: a
 0-byte or unparseable lane result is a DEAD lane, not a finished one (two died
@@ -1295,6 +1408,13 @@ Enforcement, so this cannot depend on the orchestrator remembering:
   explicitly); everything above MICRO needs real voices.
 - Suites, self-repros, and mutation proofs are PRE-conditions for review, not substitutes
   for it. "I verified it myself" is the exact claim the review exists to check.
+- Any review, completion, approval, or merge-readiness claim MUST run
+  `Assert-FleetReviewCertification.ps1` last and quote its `certification:` line plus every
+  reducer line it re-emits. Unless the last line says `certification: CERTIFIED`, the
+  response MUST begin `UNCERTIFIED —` and MUST NOT say done, complete, approved, passed,
+  mergeable, ready to merge, or ready to push. Missing packet manifest, READY preflight,
+  signed-v2 receipt, expected span, effective manifest, or reducer line is UNCERTIFIED.
+  Native/ad-hoc/self-review never substitutes.
 
 ## Signed receipt cutover (v2 HMAC — atomic, fail-closed)
 

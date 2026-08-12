@@ -56,6 +56,8 @@ $ExpectedModel = "grok-4.5"
 $proc = $null
 $ownedPrompt = $null
 $ownedProbePrompt = $null
+$poolReg = $null
+. (Join-Path $PSScriptRoot 'GrokPoolIntegration.Helpers.ps1')
 $script:heartbeatPath = if (-not [string]::IsNullOrWhiteSpace($HeartbeatPath)) { $HeartbeatPath } else { Join-Path ([IO.Path]::GetTempPath()) ("fleet-grok-heartbeat-" + $PID + ".jsonl") }
 try { Remove-Item -LiteralPath $script:heartbeatPath -Force -ErrorAction SilentlyContinue } catch { }
 $grokHome = if ([string]::IsNullOrWhiteSpace($env:GROK_HOME)) { Join-Path $env:USERPROFILE ".grok" } else { $env:GROK_HOME }
@@ -66,7 +68,7 @@ $compatEnvNames = @(
   "GROK_CODEX_SKILLS_ENABLED", "GROK_CODEX_RULES_ENABLED", "GROK_CODEX_AGENTS_ENABLED", "GROK_CODEX_MCPS_ENABLED", "GROK_CODEX_HOOKS_ENABLED"
 )
 $fleetTerseOutputTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
-$fleetSystemPrompt = "You are Grok 4.5, Fleet's first-class non-design worker. Follow the locked charter. Read any tracked source, test, config, caller, or dependency needed for correctness; edit only allowed paths. Choose private implementation details inside locked behavior. Apply Ponytail directly: make the smallest correct change; delete or reuse before adding; prefer installed dependencies and existing utilities; add no abstraction, file, or dependency unless the locked charter requires it. File-size discipline: keep source files near 250 lines; never create a file over 300 lines and never push a file past 300 lines - split along existing boundaries instead; a file already over 300 lines gets only minimal in-place edits, never net growth, unless the locked charter explicitly orders otherwise. Stop only for unresolved UX, product, public API, cross-service architecture, or security-policy decisions. Never commit, stage, push, merge, access secrets, or cause external side effects. Run task-relevant checks. Evidence integrity: report what each check ACTUALLY exercised (tests collected and passed, files scanned, records processed) - a check that ran nothing is a failure, not a pass; never derive a test's expected value from the code under test; never let a mock stand in for the behavior being verified; a new test is unproven until you have seen it fail with the code broken. One requested structured self-review replaces nested review workflows. Return required JSON with observed evidence only."
+$fleetSystemPrompt = "You are Grok 4.5, Fleet's first-class non-design worker. Follow the locked charter. Read any tracked source, test, config, caller, or dependency needed for correctness; edit only allowed paths. Choose private implementation details inside locked behavior. Apply Ponytail directly: make the smallest correct change; delete or reuse before adding; prefer installed dependencies and existing utilities; add no abstraction, file, or dependency unless the locked charter requires it. File-size discipline (bands, matching Assert-FleetFileSize): target ~250 lines; 300 is a SOFT WARN - prefer splitting along existing boundaries but it is not a hard stop; 400 is the HARD CAP - never create or grow a source file past 400 lines, split first; a file already over 400 gets only minimal in-place edits, never net growth, unless the locked charter explicitly orders otherwise (test files: 400 warn / 600 cap). Do not over-split to chase 250 - a cohesive 320-line file beats three fragmented ones. Stop only for unresolved UX, product, public API, cross-service architecture, or security-policy decisions. Never commit, stage, push, merge, access secrets, or cause external side effects. Run task-relevant checks. Evidence integrity: report what each check ACTUALLY exercised (tests collected and passed, files scanned, records processed) - a check that ran nothing is a failure, not a pass; never derive a test's expected value from the code under test; never let a mock stand in for the behavior being verified; a new test is unproven until you have seen it fail with the code broken. One requested structured self-review replaces nested review workflows. Return required JSON with observed evidence only."
 # Space not newline: --system-prompt-override rides Windows argv; raw newlines drop trailing flags.
 $fleetSystemPrompt = $fleetSystemPrompt + " " + $fleetTerseOutputTrailer
 $windowsShellGuidance = " Runtime is Windows PowerShell 5.1. Never use Bash heredocs such as << or python - <<. Never use node -e, node --eval, or python -c for source-file writes. Use search_replace for source edits; do not rewrite whole source files through inline shell quoting or create helper scripts/temp source files."
@@ -686,6 +688,19 @@ $effectiveFirstTurnSeconds = if ($PSBoundParameters.ContainsKey('FirstTurnTimeou
 try {
   if ($hasPrompt -eq $hasFile) { throw "Specify exactly one of -Prompt or -PromptFile." }
   $WorkingDirectory = (Resolve-Path -LiteralPath $WorkingDirectory).Path
+  $poolReg = Initialize-GrokPoolRegistration -WorkingDirectory $WorkingDirectory -ScriptRoot $PSScriptRoot -WrapperProcessId $PID
+  # Grok 1.0.0's sandbox is proven reliable inside an isolated worktree (terminal proof
+  # passes, writes stay contained, self-verification works -- fleet-parstress/clipins runs).
+  # So an isolated IMPLEMENTATION lane gets more freedom BY DEFAULT: bash + subagents + web,
+  # matching the stated adapter policy ("isolated impl lanes get subagents + web default-on").
+  # Any caller can still override each explicitly; Review lanes and non-isolated lanes are
+  # unchanged. Safety rails are untouched below: bash still requires an isolated worktree,
+  # nested-agent spawns (codex/grok/claude) stay denied, MCP stays denied, manager re-verifies.
+  if ($IsolatedWorktree -and -not $Review) {
+    if (-not $PSBoundParameters.ContainsKey('BashCapability')) { $BashCapability = 'Auto' }
+    if (-not $PSBoundParameters.ContainsKey('EnableSubagents')) { $EnableSubagents = $true }
+    if (-not $PSBoundParameters.ContainsKey('EnableWebSearch')) { $EnableWebSearch = $true }
+  }
   if ($BashCapability -eq "Auto" -and -not $IsolatedWorktree) { throw "BashCapability Auto requires -IsolatedWorktree." }
   if ($BashCapability -eq "Auto") { Assert-IsolatedGitWorktree $WorkingDirectory }
   if ($IsolatedWorktree) { Assert-NoEscapingReparsePoints $WorkingDirectory }
@@ -711,7 +726,7 @@ try {
   } else {
     $promptText += "`nReturn only the JSON object required by the supplied schema. Populate every field. Perform exactly $MinimumAuditPasses static adversarial self-review pass(es); fix actionable findings before returning. Report only checks actually run. Reserve enough context and time for the final JSON."
     if ($env:OS -eq "Windows_NT") { $promptText += $windowsShellGuidance }
-    if ($bashCapable) { $promptText += " Use the terminal only for charter-scoped focused tests and concise diff/status checks. Terra/Codex owns full suites, build/typecheck, lint, and Fallow unless the charter explains why a focused check cannot be reproduced by the manager." }
+    if ($bashCapable) { $promptText += " You have a real terminal in an isolated worktree -- use it to VERIFY YOUR OWN WORK before returning: run the build/typecheck for the package(s) you touched and the tests that exercise your change, read the failures, and fix them so you hand off green. A new or heavily-changed source file that you never compiled/typechecked is not done. Prefer the smallest command that proves your slice (the touched package's build + your focused tests) over re-running the entire monorepo suite every pass. The manager still runs the authoritative barrier gate once; arriving already-green just saves repair rounds. Do NOT spawn nested coding agents (codex/grok/claude) and do NOT run destructive or repo-wide mutations outside your locked scope." }
   }
   if (-not $LeanSystemPrompt) { $promptText += "`n" + $fleetTerseOutputTrailer }
   $effectivePromptHash = Get-TextSha256 $promptText
@@ -763,6 +778,7 @@ try {
   # Pre-lane git porcelain snapshot so observed_changed is the delta, not pre-existing dirty.
   $gitStatusBefore = if (-not $Review) { Get-GitStatusPathMap -Path $WorkingDirectory } else { $null }
   if (-not $proc.Start()) { throw "Failed to start Grok." }
+  Register-GrokPoolWorkerRoot -PoolRegistration $poolReg -WorkerProcessId ([int]$proc.Id)
   $startedAt = Get-Date
   $deadline = $startedAt.AddSeconds($effectiveTimeoutSeconds)
   $firstTurnDeadline = if ($effectiveFirstTurnSeconds -gt 0) { $startedAt.AddSeconds($effectiveFirstTurnSeconds) } else { $null }
@@ -993,8 +1009,15 @@ catch {
   exit 1
 }
 finally {
-  if ($proc -and -not $proc.HasExited) { Stop-Tree $proc }
+  # Tree-kill on EVERY exit path, not just timeout. On normal completion the wrapper returns
+  # as soon as grok writes its result JSON, but grok can leave tool/child processes still
+  # tearing down; taskkill /T reaps them (harmless no-op on the already-exited parent). Only
+  # OS-defunct zombies survive this -- those are unkillable by any code (reboot-only), not a
+  # wrapper bug. (Leak surfaced by fleet-parstress-20260808.)
+  if ($proc) { Stop-Tree $proc }
   if ($proc) { try { $proc.Dispose() } catch { } }
+  Unregister-GrokPoolRegistration -PoolRegistration $poolReg
+  $poolReg = $null
   foreach ($path in @($ownedPrompt, $ownedProbePrompt)) { if ($path -and (Test-Path -LiteralPath $path)) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
   # Fallback only when no intentional result was written. Does not cover external kills.
   if (-not $script:resultEmitted) {

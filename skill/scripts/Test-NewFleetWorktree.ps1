@@ -8,6 +8,8 @@ $passed = 0
 $failed = 0
 $skipped = 0
 $origProfile = $env:USERPROFILE
+$origLivenessRelax = $env:FLEET_POOL_TEST_RELAX_UNRELATED
+$origHarness = $env:FLEET_TEST_HARNESS
 $createdRepos = @()
 $createdWorktrees = @()  # @{ Repo=; Path= }
 
@@ -72,22 +74,26 @@ function Invoke-Helper {
     [string]$NodeBinDir,
     [int]$InstallTimeoutSeconds = 60,
     [string]$Mode = 'text',
-    [string]$UserProfile = $fakeProfile
+    [string]$UserProfile = $fakeProfile,
+    [string]$PoolMode = '',
+    [string]$BuildCacheSpec = ''
   )
-  $args = @(
+  $argList = @(
     '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $helper,
     '-Repo', $Repo, '-RunId', $RunId, '-BaseRef', $BaseRef,
     '-InstallTimeoutSeconds', [string]$InstallTimeoutSeconds, '-Mode', $Mode
   )
-  foreach ($cf in @($CopyFile)) { $args += @('-CopyFile', $cf) }
-  if ($Install) { $args += '-Install' }
-  if ($NoInstall) { $args += '-NoInstall' }
-  if (-not [string]::IsNullOrWhiteSpace($InstallCommand)) { $args += @('-InstallCommand', $InstallCommand) }
-  if (-not [string]::IsNullOrWhiteSpace($NodeBinDir)) { $args += @('-NodeBinDir', $NodeBinDir) }
+  foreach ($cf in @($CopyFile)) { $argList += @('-CopyFile', $cf) }
+  if ($Install) { $argList += '-Install' }
+  if ($NoInstall) { $argList += '-NoInstall' }
+  if (-not [string]::IsNullOrWhiteSpace($InstallCommand)) { $argList += @('-InstallCommand', $InstallCommand) }
+  if (-not [string]::IsNullOrWhiteSpace($NodeBinDir)) { $argList += @('-NodeBinDir', $NodeBinDir) }
+  if (-not [string]::IsNullOrWhiteSpace($PoolMode)) { $argList += @('-PoolMode', $PoolMode) }
+  if (-not [string]::IsNullOrWhiteSpace($BuildCacheSpec)) { $argList += @('-BuildCacheSpec', $BuildCacheSpec) }
 
   $psi = New-Object System.Diagnostics.ProcessStartInfo
   $psi.FileName = 'powershell.exe'
-  $psi.Arguments = Quote-Args $args
+  $psi.Arguments = Quote-Args $argList
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
@@ -104,16 +110,45 @@ function Invoke-Helper {
 
   $repoSlug = ([IO.Path]::GetFileName([IO.Path]::GetFullPath($Repo))).ToLowerInvariant()
   $expected = [IO.Path]::GetFullPath((Join-Path $UserProfile ".codex\worktrees\$repoSlug\$RunId"))
-  if ((Test-Path -LiteralPath $expected) -and ($createdWorktrees | Where-Object { $_.Path -eq $expected }).Count -eq 0) {
+  $summaryPath = $expected
+  $ownership = 'run-owned'
+  $slotId = ''
+  $leaseId = ''
+  $reuseHit = $null
+  $sumLine = ($stdout -split "`r?`n" | Where-Object { $_ -match '^worktree:' -or $_.Trim().StartsWith('{') } | Select-Object -Last 1)
+  if ($sumLine -match '^worktree:\s*(.+?)\s*\|\s*branch:') {
+    $summaryPath = $Matches[1].Trim()
+  } elseif ($sumLine -and $sumLine.Trim().StartsWith('{')) {
+    try {
+      $jo = $sumLine | ConvertFrom-Json
+      if ($jo.worktree) { $summaryPath = [string]$jo.worktree }
+      if ($jo.ownership) { $ownership = [string]$jo.ownership }
+      if ($null -ne $jo.slot) { $slotId = [string]$jo.slot }
+      if ($null -ne $jo.lease_id) { $leaseId = [string]$jo.lease_id }
+      if ($null -ne $jo.reuse_hit) { $reuseHit = [bool]$jo.reuse_hit }
+    } catch { }
+  }
+  if ($sumLine -match 'ownership:\s*([^\s|]+)') { $ownership = $Matches[1] }
+  if ($sumLine -match 'slot:\s*([^\s|]+)') { $slotId = $Matches[1] }
+  if ($sumLine -match 'lease_id:\s*([^\s|]+)') { $leaseId = $Matches[1] }
+  if ($sumLine -match 'reuse_hit:\s*(true|false)') { $reuseHit = ($Matches[1] -eq 'true') }
+  if ((Test-Path -LiteralPath $summaryPath) -and ($createdWorktrees | Where-Object { $_.Path -eq $summaryPath }).Count -eq 0) {
+    $script:createdWorktrees += @{ Repo = $Repo; Path = $summaryPath }
+  } elseif ((Test-Path -LiteralPath $expected) -and ($createdWorktrees | Where-Object { $_.Path -eq $expected }).Count -eq 0) {
     $script:createdWorktrees += @{ Repo = $Repo; Path = $expected }
   }
 
   return [pscustomobject]@{
-    ExitCode = $code
-    Stdout   = $stdout.TrimEnd()
-    Stderr   = $stderr.TrimEnd()
-    Path     = $expected
-    Branch   = "fleet/$RunId"
+    ExitCode   = $code
+    Stdout     = $stdout.TrimEnd()
+    Stderr     = $stderr.TrimEnd()
+    Path       = $summaryPath
+    ColdPath   = $expected
+    Branch     = "fleet/$RunId"
+    Ownership  = $ownership
+    Slot       = $slotId
+    LeaseId    = $leaseId
+    ReuseHit   = $reuseHit
   }
 }
 
@@ -153,7 +188,8 @@ try {
     $br = & git -C $repo branch --list 'fleet/happy1'
     Assert-True ($br -match 'fleet/happy1') "branch not created: $br"
     $line = ($r.Stdout -split "`r?`n" | Where-Object { $_ -match '^worktree:' } | Select-Object -Last 1)
-    Assert-True ($line -match '^worktree: .+ \| branch: fleet/happy1 \| copied: 0 \| install: skipped\(no package\.json\) \| deps: 0 entries$') "summary mismatch: $line"
+    Assert-True ($line -match '^worktree: .+ \| branch: fleet/happy1 \| copied: 0 \| install: skipped\(no package\.json\) \| deps: 0 entries') "summary mismatch: $line"
+    Assert-True ($line -match 'ownership: run-owned') "expected ownership run-owned: $line"
   }
 
   Case 'CopyFile copies relative path' {
@@ -194,7 +230,8 @@ try {
     Assert-True ($r.ExitCode -eq 0) "exit $($r.ExitCode) stderr=$($r.Stderr) stdout=$($r.Stdout)"
     Assert-True (Test-Path -LiteralPath $r.Path) "worktree missing at $($r.Path)"
     $line = ($r.Stdout -split "`r?`n" | Where-Object { $_ -match '^worktree:' } | Select-Object -Last 1)
-    Assert-True ($line -match '^worktree: .+ \| branch: fleet/clean1 \| copied: 0 \| install: skipped\(no package\.json\) \| deps: 0 entries$') "summary mismatch: $line"
+    Assert-True ($line -match '^worktree: .+ \| branch: fleet/clean1 \| copied: 0 \| install: skipped\(no package\.json\) \| deps: 0 entries') "summary mismatch: $line"
+    Assert-True ($line -match 'ownership: run-owned') "expected ownership run-owned: $line"
   }
 
   Case 'ancestor junction outside canonical root refused' {
@@ -307,6 +344,87 @@ try {
     Assert-True ($combo -match 'install: failed' -or $combo -match 'node_modules is empty' -or $combo -match 'did not materialise') "hollow not failed closed: $combo"
   }
 
+  Case 'PoolMode Off is legacy run-owned' {
+    $r = Invoke-Helper -Repo $repo -RunId 'pool-off1' -PoolMode 'Off' -Mode 'json'
+    Assert-True ($r.ExitCode -eq 0) "exit $($r.ExitCode) stderr=$($r.Stderr) stdout=$($r.Stdout)"
+    Assert-True ($r.Ownership -eq 'run-owned') "ownership=$($r.Ownership)"
+    Assert-True (Test-Path -LiteralPath $r.ColdPath) "cold path missing: $($r.ColdPath)"
+    Assert-True ($r.Path -eq $r.ColdPath) "path should be cold: $($r.Path)"
+    Assert-True ([string]::IsNullOrWhiteSpace($r.Slot) -or $r.Slot -eq '') "slot should be empty: $($r.Slot)"
+    $sidecar = $r.Path + '.fleet-run.json'
+    Assert-True (Test-Path -LiteralPath $sidecar) "cold sidecar missing: $sidecar"
+    $sidecarJson = [IO.File]::ReadAllText($sidecar) | ConvertFrom-Json
+    Assert-True (($sidecarJson.ownership -eq 'run-owned') -and ($sidecarJson.run_id -eq 'pool-off1')) 'cold sidecar ownership/run mismatch'
+  }
+
+  Case 'PoolMode Auto without pool falls back cold' {
+    $r = Invoke-Helper -Repo $repo -RunId 'pool-auto-cold' -PoolMode 'Auto' -Mode 'json'
+    Assert-True ($r.ExitCode -eq 0) "exit $($r.ExitCode) stderr=$($r.Stderr) stdout=$($r.Stdout)"
+    Assert-True ($r.Ownership -eq 'run-owned') "ownership=$($r.Ownership) expected run-owned fallback"
+    Assert-True (Test-Path -LiteralPath $r.ColdPath) "cold worktree missing: $($r.ColdPath)"
+  }
+
+  Case 'PoolMode Auto with initialized pool returns pool-slot' {
+    . (Join-Path $PSScriptRoot 'FleetWorktreeTest.Helpers.ps1')
+    $env:FLEET_TEST_HARNESS = '1'
+    $env:FLEET_POOL_TEST_RELAX_UNRELATED = '1'
+    $poolHome = New-FleetPoolTestHome -Prefix 'nfw-pool'
+    $poolRepo = New-FleetPoolTestRepo -ParentDir $poolHome.Root -Name 'nfw-pool-repo'
+    $initNpm = New-FakeNpmBin 'pool-init-npm'
+    $prevPath = $env:PATH
+    $env:PATH = $initNpm + ';' + $prevPath
+    try {
+      $initScript = Join-Path $PSScriptRoot 'Initialize-FleetWorktreePool.ps1'
+      $init = Invoke-FleetPoolScript -ScriptPath $initScript -UserProfile $poolHome.UserProfile -ArgumentList @('-Repo', $poolRepo.Path, '-Size', '2', '-Mode', 'json') -TimeoutSeconds 600
+      Assert-True ($init.ExitCode -eq 0) "init failed: $($init.Stderr) $($init.Stdout)"
+    } finally { $env:PATH = $prevPath }
+    foreach ($slotRec in @(Get-FleetPoolSlotStates -UserProfile $poolHome.UserProfile)) {
+      $spath = [string]$slotRec.path
+      if (-not [string]::IsNullOrWhiteSpace($spath)) { Register-FleetPoolWorktree -Repo $poolRepo.Path -Path $spath }
+    }
+    # First acquire: warm node_modules from init → reuse_hit true (no InstallCommand reinstall).
+    $r = Invoke-Helper -Repo $poolRepo.Path -RunId 'pool-auto-hit' -Mode 'json' -UserProfile $poolHome.UserProfile
+    Assert-True ($r.ExitCode -eq 0) "exit $($r.ExitCode) err=$($r.Stderr) out=$($r.Stdout)"
+    Assert-True ($r.Ownership -eq 'pool-slot') "ownership=$($r.Ownership) out=$($r.Stdout)"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($r.Slot)) "slot empty: $($r.Slot)"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($r.LeaseId)) "lease_id empty (caller needs Exit): $($r.LeaseId)"
+    Assert-True ($r.Path -match 'slot-') "pool path expected slot-*: $($r.Path)"
+    Assert-True (Test-Path -LiteralPath $r.Path) "slot path missing: $($r.Path)"
+    Assert-True (-not (Test-Path -LiteralPath ($r.Path + '.fleet-run.json'))) 'pool slot must not get a run sidecar'
+    Assert-True ($r.ReuseHit -eq $true) "expected reuse_hit true (warm deps, no reinstall): hit=$($r.ReuseHit) out=$($r.Stdout)"
+    $exitScript = Join-Path $PSScriptRoot 'Exit-FleetWorktreePoolSlot.ps1'
+    $ex = Invoke-FleetPoolScript -ScriptPath $exitScript -UserProfile $poolHome.UserProfile -ArgumentList @('-Repo', $poolRepo.Path, '-RunId', 'pool-auto-hit', '-LeaseId', $r.LeaseId, '-Mode', 'json')
+    Assert-True ($ex.ExitCode -eq 0) "exit slot failed: $($ex.Stderr) $($ex.Stdout)"
+    # Second acquire with explicit InstallCommand → install path → reuse_hit false.
+    $mockInstall = New-FleetMockInstallCommand -CounterPath $poolHome.CounterPath -PackageName $poolRepo.DepName
+    $r2 = Invoke-Helper -Repo $poolRepo.Path -RunId 'pool-auto-hit2' -PoolMode 'Auto' -Mode 'json' -UserProfile $poolHome.UserProfile -InstallCommand $mockInstall
+    Assert-True ($r2.ExitCode -eq 0) "install acquire exit $($r2.ExitCode) err=$($r2.Stderr) out=$($r2.Stdout)"
+    Assert-True ($r2.Ownership -eq 'pool-slot') "install acquire ownership=$($r2.Ownership)"
+    Assert-True ($r2.ReuseHit -eq $false) "expected reuse_hit false when InstallCommand runs: hit=$($r2.ReuseHit) out=$($r2.Stdout)"
+    if (-not [string]::IsNullOrWhiteSpace($r2.LeaseId)) {
+      $null = Invoke-FleetPoolScript -ScriptPath $exitScript -UserProfile $poolHome.UserProfile -ArgumentList @('-Repo', $poolRepo.Path, '-RunId', 'pool-auto-hit2', '-LeaseId', $r2.LeaseId, '-Mode', 'json')
+    }
+    $poolJson = Find-FleetPoolJsonPath -UserProfile $poolHome.UserProfile
+    $state = [IO.File]::ReadAllText($poolJson) | ConvertFrom-Json
+    foreach ($slotRec in @($state.slots)) { $slotRec.state = 'acquired'; $slotRec.lease_id = [guid]::NewGuid().ToString('n') }
+    [IO.File]::WriteAllText($poolJson, ($state | ConvertTo-Json -Depth 10), (New-Object Text.UTF8Encoding($false)))
+    $fallback = Invoke-Helper -Repo $poolRepo.Path -RunId 'pool-auto-exhausted' -NoInstall -Mode 'json' -UserProfile $poolHome.UserProfile
+    Assert-True (($fallback.ExitCode -eq 0) -and ($fallback.Ownership -eq 'run-owned')) "exhaustion did not cold-fallback: $($fallback.Stderr) $($fallback.Stdout)"
+    $fallbackJson = ($fallback.Stdout -split "`r?`n" | Where-Object { $_.Trim().StartsWith('{') } | Select-Object -Last 1) | ConvertFrom-Json
+    Assert-True ([string]$fallbackJson.pool_fallback_reason -eq 'all_slots_busy_or_quarantined') "fallback reason=$($fallbackJson.pool_fallback_reason)"
+    [IO.File]::WriteAllText($poolJson, '{broken', (New-Object Text.UTF8Encoding($false)))
+    $corrupt = Invoke-Helper -Repo $poolRepo.Path -RunId 'pool-auto-corrupt' -Mode 'json' -UserProfile $poolHome.UserProfile
+    Assert-True (($corrupt.ExitCode -ne 0) -and -not (Test-Path -LiteralPath $corrupt.ColdPath)) "corrupt pool silently cold-fell back: $($corrupt.Stdout) $($corrupt.Stderr)"
+    Clear-FleetPoolTestArtifacts -Repo $poolRepo.Path
+  }
+
+  Case 'PoolMode Require without pool fails (no cold fallback)' {
+    $r = Invoke-Helper -Repo $repo -RunId 'pool-req-fail' -PoolMode 'Require' -Mode 'json'
+    Assert-True ($r.ExitCode -eq 1) "expected exit 1, got $($r.ExitCode) out=$($r.Stdout)"
+    Assert-True ($r.Stderr -match 'Require|pool|Pool' -or $r.Stdout -match 'Require|pool|Pool') "expected pool require error: err=$($r.Stderr) out=$($r.Stdout)"
+    Assert-True (-not (Test-Path -LiteralPath $r.ColdPath)) "must not cold-fallback: $($r.ColdPath)"
+  }
+
 } finally {
   foreach ($wt in $createdWorktrees) {
     try {
@@ -327,13 +445,15 @@ try {
       $ErrorActionPreference = 'Continue'
       & git -C $r worktree prune 2>$null | Out-Null
       # Delete leftover branch refs from tests (best effort).
-      foreach ($b in @('fleet/happy1','fleet/copy1','fleet/dupe-branch','fleet/junc1','fleet/auto-ci','fleet/auto-install','fleet/noinst1','fleet/inst-ok','fleet/inst-hollow','fleet/clean1','fleet/anc-out','fleet/anc-in')) {
+      foreach ($b in @('fleet/happy1','fleet/copy1','fleet/dupe-branch','fleet/junc1','fleet/auto-ci','fleet/auto-install','fleet/noinst1','fleet/inst-ok','fleet/inst-hollow','fleet/clean1','fleet/anc-out','fleet/anc-in','fleet/pool-off1','fleet/pool-auto-cold','fleet/pool-auto-hit','fleet/pool-auto-hit2','fleet/pool-req-fail')) {
         & git -C $r branch -D $b 2>$null | Out-Null
       }
       $ErrorActionPreference = $prev
     } catch { }
   }
   $env:USERPROFILE = $origProfile
+  $env:FLEET_TEST_HARNESS = $origHarness
+  $env:FLEET_POOL_TEST_RELAX_UNRELATED = $origLivenessRelax
   if (Test-Path -LiteralPath $temp) {
     Remove-JunctionsUnder -Root $temp
     Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
@@ -341,7 +461,9 @@ try {
 }
 
 Write-Host ""
-Write-Host "DENOMINATOR: cases_run=$($passed + $failed + $skipped) passed=$passed failed=$failed skipped=$skipped"
+$totalCases = $passed + $failed + $skipped
+Write-Host "tests: $passed/$totalCases"
+Write-Host "DENOMINATOR: cases_run=$totalCases passed=$passed failed=$failed skipped=$skipped"
 if ($passed -eq 0 -and $failed -eq 0) { Write-Host 'FAIL suite collected 0 cases'; exit 1 }
 if ($failed -gt 0) { exit 1 }
 exit 0

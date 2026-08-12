@@ -27,8 +27,8 @@ import subprocess
 def is_reparse(path):
     try:
         return bool(os.lstat(path).st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT)
-    except OSError:
-        return False
+    except OSError as exc:
+        raise RuntimeError("lstat inspection failed; refusing subtree: {}: {}".format(path, exc))
 
 
 def _purge_dir(path, counter):

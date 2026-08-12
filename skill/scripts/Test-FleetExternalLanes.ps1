@@ -1,17 +1,60 @@
 # Live Fleet transport preflight for Grok, Opus, GLM, and Gemini/Antigravity.
+# Selected-voice mode (-SelectedVoiceManifest): probe only chosen panel voices before
+# packet freeze. See references/review-preflight.md.
 param(
   [string]$ImagePath,
   [string]$ExpectedImageText,
   [switch]$RequireOpus,
   [switch]$RequireGlm,
- [switch]$RequireImplementation,
- [switch]$RequireGemini,
+  [switch]$RequireImplementation,
+  [switch]$RequireGemini,
   [switch]$RequireKimi,
   [switch]$KimiOnly,
-  [switch]$ForceProbe
+  [switch]$ForceProbe,
+  # Selected-voice preflight (T2). When set, legacy flag probes are skipped.
+  [string]$SelectedVoiceManifest,
+  [string]$RunId,
+  [string]$OutputPath,
+  [ValidateSet('text', 'json')]
+  [string]$Mode = 'text',
+  # Private test hooks (not public API): injectable probes + cache/lease overrides.
+  [hashtable]$ProbeCommandTable,
+  [string]$CachePathOverride,
+  [string]$LeaseDirOverride,
+  [object]$UtcNowOverride
 )
 
 $ErrorActionPreference = "Stop"
+$scriptRoot = $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($scriptRoot)) { $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+if ($null -ne $ProbeCommandTable -and $env:FLEET_TEST_HARNESS -cne '1') { throw 'ProbeCommandTable override refused: FLEET_TEST_HARNESS=1 is required.' }
+
+# ---------------------------------------------------------------------------
+# Selected-voice preflight path
+# ---------------------------------------------------------------------------
+if (-not [string]::IsNullOrWhiteSpace($SelectedVoiceManifest)) {
+  if ([string]::IsNullOrWhiteSpace($RunId)) { throw 'Selected-voice preflight requires -RunId.' }
+  . (Join-Path $scriptRoot 'FleetReviewPreflight.Helpers.ps1')
+  $pf = Invoke-FleetReviewPreflight `
+    -SelectedVoiceManifest $SelectedVoiceManifest `
+    -RunId $RunId `
+    -OutputPath $OutputPath `
+    -Mode $Mode `
+    -ForceProbe:$ForceProbe `
+    -ProbeCommandTable $ProbeCommandTable `
+    -CachePathOverride $CachePathOverride `
+    -LeaseDirOverride $LeaseDirOverride `
+    -UtcNowOverride $UtcNowOverride `
+    -ScriptRoot $scriptRoot
+  if ($Mode -eq 'json') { Write-Output $pf.EvidenceJson }
+  Write-Output $pf.StatusLine
+  if (-not $pf.Ready) { exit 1 }
+  exit 0
+}
+
+# ---------------------------------------------------------------------------
+# Legacy external-lane probes (unchanged behavior)
+# ---------------------------------------------------------------------------
 
 # Version-keyed probe cache: skip re-probing when no CLI version changed. Keyed on the
 # required-lane set + the installed CLI versions from cli-update-status.json. Fresh for

@@ -85,7 +85,7 @@ function Test-FleetLaneHasSubstantiveProse {
 function Test-FleetLaneHasVerdictLine {
   param([string]$Text)
   if ([string]::IsNullOrWhiteSpace($Text)) { return $false }
-  return [bool]($Text -match '(?i)\bVERDICT:\s*(BLOCK|NEEDS-FIX|CLEAR|APPROVE|WATCH|PASS|FAIL)\b')
+  return [bool]($Text -match '(?i)\bVERDICT:\s*(GO|NO-GO|BLOCK|NEEDS-FIX|CLEAR|APPROVE|WATCH|PASS|FAIL)\b')
 }
 
 function Test-FleetLaneHasFindingWithEvidence {

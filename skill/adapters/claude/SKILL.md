@@ -124,6 +124,13 @@ Fable/Opus/four-voice drift.
   and quotes its line (`review-integrity: ...`, `lane-spans: ...`, adversarial
   summary, then `merge-readiness: ...`); root NEVER substitutes its own review for a
   missing receipt. See merge-readiness.md How to run / stage graph.
+- Any review, completion, approval, or merge-readiness claim MUST run
+  `Assert-FleetReviewCertification.ps1` last and quote its `certification:` line plus every
+  reducer line it re-emits. Unless the last line says `certification: CERTIFIED`, the
+  response MUST begin `UNCERTIFIED —` and MUST NOT say done, complete, approved, passed,
+  mergeable, ready to merge, or ready to push. Missing packet manifest, READY preflight,
+  signed-v2 receipt, expected span, effective manifest, or reducer line is UNCERTIFIED.
+  Native/ad-hoc/self-review never substitutes.
 - Fallback launches are NEW labeled wrapper invocations with independent receipts;
   never hidden inside an Agent or Bash transport. Routing provenance:
   `references/routing-evidence.md`. Hosted refusal failover policy:
@@ -173,8 +180,13 @@ hook/plugin context and preserve deterministic structured output.
 Opus wrapper negotiates CLI-advertised isolation, stdin+EOF, no tools/persistence, hard timeout,
 verifies `modelUsage` is the requested Opus (`claude-opus-5`; 4.8 only fallback). Pi wrapper uses
 print-stdin + canonical GLM safeguards. Sol wrapper (`scripts/Invoke-Sol.ps1`) is canonical for the
-Sol lane (never raw `codex exec`): forces `-Effort high`, resolves the off-PATH launcher, kills
-0-turn hangs, reports `model_cache_skew`; codex is now a tracked CLI-audit runtime.
+Sol lane (never raw `codex exec`): forces `-Effort high`, resolves the off-PATH launcher via the
+approved-pin hop (codex-0.146.1), kills 0-turn hangs, and gives the lane its OWN `CODEX_HOME`
+(`New-CodexLaneHome.ps1`, copies auth+config) so the model cache is never shared — no skew, no
+parallel write race (4 concurrent Sol lanes proven skew-free; shared cache untouched). Terra lanes
+via raw `codex exec` should set `CODEX_HOME` the same way. Accepts `-PromptFile` (like
+Invoke-Grok45/Opus48) so Sol dispatches from the Bash tool without the `(Get-Content -Raw …)` parens
+the Bash tool chokes on. codex is a tracked CLI-audit runtime.
 
 ## Kimi K3
 

@@ -2,6 +2,12 @@ param([switch]$Live)
 
 $ErrorActionPreference = 'Stop'
 $wrapper = Join-Path $PSScriptRoot 'Invoke-KimiK3.ps1'
+# 2026-08-12 size split: wrapper functions live in FleetKimi.*.Helpers.ps1; extraction-based
+# cases read the combined source.
+function Get-KimiWrapperSource {
+  $parts = @($wrapper, (Join-Path $PSScriptRoot 'FleetKimi.Runtime.Helpers.ps1'), (Join-Path $PSScriptRoot 'FleetKimi.Config.Helpers.ps1'), (Join-Path $PSScriptRoot 'FleetKimi.Phases.Helpers.ps1'))
+  return (($parts | ForEach-Object { [IO.File]::ReadAllText($_) }) -join "`n")
+}
 $temp = Join-Path ([IO.Path]::GetTempPath()) ('fleet-kimi-test-' + [guid]::NewGuid().ToString('n'))
 $fake = Join-Path $temp 'kimi.cmd'
 $fakePs1 = Join-Path $temp 'fake-kimi.ps1'
@@ -21,6 +27,9 @@ try {
   $env:USERPROFILE = Join-Path $temp 'profile'
   New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE '.kimi-code') | Out-Null
   New-Item -ItemType Directory -Force -Path (Join-Path $env:USERPROFILE '.kimi-code\credentials') | Out-Null
+  # Valid non-empty source credential so preflight accepts every integration case.
+  # Fixture tokens only; never the real store (USERPROFILE redirected above).
+  [IO.File]::WriteAllText((Join-Path $env:USERPROFILE '.kimi-code\credentials\kimi-code.json'), '{"access_token":"fixture-access-seed","refresh_token":"fixture-refresh-seed","expires_at":9000000000,"scope":"kimi-code","token_type":"Bearer","expires_in":900}', (New-Object Text.UTF8Encoding($false)))
   [IO.File]::WriteAllText((Join-Path $env:USERPROFILE '.kimi-code\config.toml'), @'
 default_model = "kimi-code/k3"
 [providers."managed:kimi-code"]
@@ -196,7 +205,7 @@ exit 0
     # Load the wrapper's own quoting functions from source (no drift) and parse
     # the emitted command line back with the same API real kimi.exe uses. This is
     # immune to the .cmd/-File test shim, which cannot carry a multiline arg.
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Quote-Argument \{.*?\r?\nfunction Quote-Arguments \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract quoting functions from wrapper source'
     Invoke-Expression $m.Value
@@ -235,6 +244,135 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     $srcAfter = Get-Content -Raw -LiteralPath (Join-Path $srcCredDir 'kimi-code.json') | ConvertFrom-Json
     Assert-True ($exit -eq 0 -and $json.source_credential_refreshed -eq $true -and [int64]$srcAfter.expires_at -eq 9999999999) ('refreshed token was not written back to source: ' + ($json | ConvertTo-Json -Compress))
   }
+  Case 'credential preflight rejects exact cleared shape; writeback/restore/no-leak unit cases' {
+    # Drive credential functions from wrapper source; never launch real kimi; redirect
+    # store via temp dirs only (real ~/.kimi-code is never touched).
+    $src = (Get-KimiWrapperSource)
+    $start = $src.IndexOf('function Test-KimiCredentialEmpty {')
+    $end = $src.IndexOf('function Export-WorkspaceIncrement {')
+    Assert-True ($start -ge 0 -and $end -gt $start) 'could not extract credential helpers from wrapper source'
+    Invoke-Expression $src.Substring($start, $end - $start)
+
+    $clearedShape = '{"access_token":"","refresh_token":"","expires_at":0,"scope":"kimi-code","token_type":"Bearer","expires_in":0}'
+    $validShape = '{"access_token":"fx-access-A","refresh_token":"fx-refresh-A","expires_at":1000,"scope":"kimi-code","token_type":"Bearer","expires_in":900}'
+    $rotatedSameExpiry = '{"access_token":"fx-access-B","refresh_token":"fx-refresh-B","expires_at":1000,"scope":"kimi-code","token_type":"Bearer","expires_in":900}'
+    $emptyChild = '{"access_token":"","refresh_token":"","expires_at":0,"scope":"kimi-code","token_type":"Bearer","expires_in":0}'
+    $fixtureTokens = @('fx-access-A', 'fx-refresh-A', 'fx-access-B', 'fx-refresh-B')
+    $leakBag = New-Object System.Text.StringBuilder
+
+    # PREFLIGHT REJECT: exact cleared shape observed in production.
+    $rejectHome = Join-Path $temp ('cred-reject-' + [guid]::NewGuid().ToString('n'))
+    $rejectDir = Join-Path $rejectHome 'credentials'
+    New-Item -ItemType Directory -Force -Path $rejectDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $rejectDir 'kimi-code.json'), $clearedShape, (New-Object Text.UTF8Encoding($false)))
+    $threw = $false
+    $throwMsg = ''
+    try { Assert-KimiSourceCredential -SourceCredentialsDir $rejectDir }
+    catch { $threw = $true; $throwMsg = $_.Exception.Message; [void]$leakBag.Append($throwMsg) }
+    Assert-True $threw 'preflight did not throw on cleared shape'
+    Assert-True ($throwMsg -match 'Kimi source credential is empty or cleared') ('preflight message not actionable: ' + $throwMsg)
+    Assert-True ($throwMsg -match 'kimi login') ('preflight message missing kimi login hint: ' + $throwMsg)
+    foreach ($tok in $fixtureTokens) { Assert-True ($throwMsg -notlike ('*' + $tok + '*')) ('token leaked in preflight error: ' + $tok) }
+
+    # PREFLIGHT ACCEPT: valid non-empty credential.
+    $acceptHome = Join-Path $temp ('cred-accept-' + [guid]::NewGuid().ToString('n'))
+    $acceptDir = Join-Path $acceptHome 'credentials'
+    New-Item -ItemType Directory -Force -Path $acceptDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $acceptDir 'kimi-code.json'), $validShape, (New-Object Text.UTF8Encoding($false)))
+    Assert-KimiSourceCredential -SourceCredentialsDir $acceptDir
+    $snap = Read-KimiSourceCredentialBytes -SourceCredentialsDir $acceptDir
+    Assert-True ($snap.Length -gt 0) 'snapshot of valid credential was empty'
+
+    # RESTORE-ON-REGRESSION: valid snapshot, source cleared after run, restore true.
+    $restoreHome = Join-Path $temp ('cred-restore-' + [guid]::NewGuid().ToString('n'))
+    $restoreDir = Join-Path $restoreHome 'credentials'
+    New-Item -ItemType Directory -Force -Path $restoreDir | Out-Null
+    $srcPath = Join-Path $restoreDir 'kimi-code.json'
+    [IO.File]::WriteAllText($srcPath, $validShape, (New-Object Text.UTF8Encoding($false)))
+    $snapBytes = Read-KimiSourceCredentialBytes -SourceCredentialsDir $restoreDir
+    [IO.File]::WriteAllText($srcPath, $clearedShape, (New-Object Text.UTF8Encoding($false)))
+    $didRestore = Restore-KimiSourceCredentialIfRegressed -SourceCredentialsDir $restoreDir -SnapshotBytes $snapBytes
+    Assert-True ($didRestore -eq $true) 'restore-on-regression did not restore cleared source'
+    $afterRestore = [IO.File]::ReadAllBytes($srcPath)
+    Assert-True ($afterRestore.Length -eq $snapBytes.Length) 'restored credential length mismatch'
+    $byteMatch = $true
+    for ($i = 0; $i -lt $snapBytes.Length; $i++) {
+      if ($afterRestore[$i] -ne $snapBytes[$i]) { $byteMatch = $false; break }
+    }
+    Assert-True $byteMatch 'restored credential not byte-for-byte equal to snapshot'
+    [void]$leakBag.Append(([bool]$didRestore).ToString())
+
+    # NO REGRESSION ON RESTORE: equal-or-better source -> restored false.
+    $keepHome = Join-Path $temp ('cred-keep-' + [guid]::NewGuid().ToString('n'))
+    $keepDir = Join-Path $keepHome 'credentials'
+    New-Item -ItemType Directory -Force -Path $keepDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $keepDir 'kimi-code.json'), $validShape, (New-Object Text.UTF8Encoding($false)))
+    $keepSnap = Read-KimiSourceCredentialBytes -SourceCredentialsDir $keepDir
+    $noRestore = Restore-KimiSourceCredentialIfRegressed -SourceCredentialsDir $keepDir -SnapshotBytes $keepSnap
+    Assert-True ($noRestore -eq $false) 'restore ran when source was still valid'
+    $keepAfter = Get-Content -Raw -LiteralPath (Join-Path $keepDir 'kimi-code.json') | ConvertFrom-Json
+    Assert-True (-not (Test-KimiCredentialEmpty -CredObject $keepAfter)) 'valid source was emptied without restore path'
+
+    # WRITEBACK PERSISTS ROTATION: different refresh_token, same expires_at.
+    $wbHome = Join-Path $temp ('cred-wb-' + [guid]::NewGuid().ToString('n'))
+    $wbSrcDir = Join-Path $wbHome 'src-credentials'
+    $wbRuntime = Join-Path $wbHome 'runtime'
+    $wbChildDir = Join-Path $wbRuntime 'credentials'
+    New-Item -ItemType Directory -Force -Path $wbSrcDir, $wbChildDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $wbSrcDir 'kimi-code.json'), $validShape, (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $wbChildDir 'kimi-code.json'), $rotatedSameExpiry, (New-Object Text.UTF8Encoding($false)))
+    $wbOk = Update-SourceCredential -RuntimeHome $wbRuntime -SourceCredentialsDir $wbSrcDir
+    Assert-True ($wbOk -eq $true) 'writeback refused rotated refresh_token with same expires_at'
+    $wbAfter = Get-Content -Raw -LiteralPath (Join-Path $wbSrcDir 'kimi-code.json') | ConvertFrom-Json
+    Assert-True ([string]$wbAfter.refresh_token -eq 'fx-refresh-B') 'source did not receive rotated refresh_token'
+    Assert-True ([string]$wbAfter.access_token -eq 'fx-access-B') 'source did not receive rotated access_token'
+    Assert-True ([int64]$wbAfter.expires_at -eq 1000) 'expires_at should remain 1000 after same-expiry rotation'
+
+    # WRITEBACK REFUSES EMPTY CHILD.
+    $emptyHome = Join-Path $temp ('cred-empty-child-' + [guid]::NewGuid().ToString('n'))
+    $emptySrcDir = Join-Path $emptyHome 'src-credentials'
+    $emptyRuntime = Join-Path $emptyHome 'runtime'
+    $emptyChildDir = Join-Path $emptyRuntime 'credentials'
+    New-Item -ItemType Directory -Force -Path $emptySrcDir, $emptyChildDir | Out-Null
+    [IO.File]::WriteAllText((Join-Path $emptySrcDir 'kimi-code.json'), $validShape, (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $emptyChildDir 'kimi-code.json'), $emptyChild, (New-Object Text.UTF8Encoding($false)))
+    $emptyWb = Update-SourceCredential -RuntimeHome $emptyRuntime -SourceCredentialsDir $emptySrcDir
+    Assert-True ($emptyWb -eq $false) 'empty child credential was written back'
+    $emptySrcAfter = Get-Content -Raw -LiteralPath (Join-Path $emptySrcDir 'kimi-code.json') | ConvertFrom-Json
+    Assert-True ([string]$emptySrcAfter.refresh_token -eq 'fx-refresh-A') 'source refresh_token changed after empty-child writeback refusal'
+
+    # NO TOKEN LEAK: function return values / messages must not contain fixture tokens.
+    # (bools/paths only; token strings must never appear in captured text.)
+    $leakText = $leakBag.ToString()
+    foreach ($tok in $fixtureTokens) {
+      Assert-True ($leakText -notlike ('*' + $tok + '*')) ('token leaked in captured credential-function text: ' + $tok)
+    }
+    # Also assert writeback/restore return values are bools (no token material).
+    Assert-True (($wbOk -is [bool]) -and ($didRestore -is [bool]) -and ($emptyWb -is [bool]) -and ($noRestore -is [bool])) 'credential helpers returned non-bool outcome'
+  }
+  Case 'credential preflight fails closed before child when source is cleared (integration)' {
+    $srcCredDir = Join-Path $env:USERPROFILE '.kimi-code\credentials'
+    $srcPath = Join-Path $srcCredDir 'kimi-code.json'
+    $backup = Get-Content -Raw -LiteralPath $srcPath
+    $cleared = '{"access_token":"","refresh_token":"","expires_at":0,"scope":"kimi-code","token_type":"Bearer","expires_in":0}'
+    [IO.File]::WriteAllText($srcPath, $cleared, (New-Object Text.UTF8Encoding($false)))
+    $old = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = 'Continue'
+      $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'x' -Mode json -TimeoutSeconds 20 2>$null
+      $exit = $LASTEXITCODE
+    }
+    finally {
+      $ErrorActionPreference = $old
+      [IO.File]::WriteAllText($srcPath, $backup, (New-Object Text.UTF8Encoding($false)))
+    }
+    $json = ($raw -join "`n") | ConvertFrom-Json
+    Assert-True ($exit -ne 0 -and $json.status -eq 'error') ('cleared source did not fail closed: ' + ($json | ConvertTo-Json -Compress))
+    Assert-True ($json.fail_reason -match 'empty or cleared') ('fail_reason not preflight: ' + $json.fail_reason)
+    Assert-True ($null -eq $json.kimi_version -or [string]::IsNullOrWhiteSpace([string]$json.kimi_version)) ('child launched despite cleared credential: ' + ($json | ConvertTo-Json -Compress))
+    $joined = ($raw -join "`n")
+    Assert-True ($joined -notmatch 'fixture-access-seed' -and $joined -notmatch 'fixture-refresh-seed') 'token leaked in preflight integration output'
+  }
   Case 'frozen artifact is registered' {
     $artifact = Join-Path $temp 'artifact.txt'; [IO.File]::WriteAllText($artifact, 'FROZEN_KIMI_ARTIFACT')
     $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt 'Summarize the packet.' -ArtifactFile $artifact -Mode json -TimeoutSeconds 20 2>$null
@@ -266,11 +404,12 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
   Case 'research swarm prompt carries tooling constraint; artifact lane does not' {
     # Extract New-KimiPrompt by source boundaries (no model call). Empty artifacts
     # so Get-Sha256 is never invoked from the extracted function body.
-    $src = [IO.File]::ReadAllText($wrapper)
+    # New-KimiPrompt is the final function of FleetKimi.Config.Helpers.ps1 (2026-08-12 split),
+    # so its body runs from its declaration to the end of the combined source.
+    $src = (Get-KimiWrapperSource)
     $start = $src.IndexOf('function New-KimiPrompt {')
-    $end = $src.IndexOf('function Write-Result {')
-    Assert-True ($start -ge 0 -and $end -gt $start) 'could not locate New-KimiPrompt / Write-Result boundaries in wrapper source'
-    Invoke-Expression $src.Substring($start, $end - $start)
+    Assert-True ($start -ge 0) 'could not locate New-KimiPrompt in wrapper source'
+    Invoke-Expression $src.Substring($start)
     $researchPrompt = New-KimiPrompt -Request 'Research local docs.' -Artifacts @() -Images @() -MaxBytes 1048576 -ResearchSwarm $true -DesignWorkspace $false -WorkspaceDirectory ''
     $artifactPrompt = New-KimiPrompt -Request 'Critique the packet.' -Artifacts @() -Images @() -MaxBytes 1048576 -ResearchSwarm $false -DesignWorkspace $false -WorkspaceDirectory ''
     $constraint = 'TOOLING CONSTRAINT: no file tools are available beyond the Read call already used to load this brief'
@@ -459,11 +598,13 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
   Case 'design-workspace: default timeout raised to 3600s when unset' {
     # Source-level: -DesignWorkspace with no -TimeoutSeconds must bump the default
     # to 3600 (the 1800s default killed a ~95%-done build on 2026-07-23).
-    $src = [IO.File]::ReadAllText($wrapper)
-    Assert-True ($src -match "DesignWorkspace -and -not \`$PSBoundParameters\.ContainsKey\('TimeoutSeconds'\)\)\s*\{\s*\`$TimeoutSeconds = 3600") 'design-workspace 3600s default override missing from wrapper'
+    $src = (Get-KimiWrapperSource)
+    # 2026-08-12 split: the override lives in Resolve-KimiInvocationInput (phases helper),
+    # where the caller's -TimeoutSeconds presence arrives as -TimeoutBound.
+    Assert-True ($src -match "DesignWorkspace -and -not \`$TimeoutBound\)\s*\{\s*\`$TimeoutSeconds = 3600") 'design-workspace 3600s default override missing from wrapper'
   }
   Case 'Write-Result text: design-workspace empty response still emits manifest with byte counts' {
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Write-Result \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract Write-Result from wrapper source'
     Invoke-Expression $m.Value
@@ -486,7 +627,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     Remove-Item -Recurse -Force $exportDir -ErrorAction SilentlyContinue
   }
   Case 'Write-Result text: design-workspace non-empty response follows manifest' {
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Write-Result \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract Write-Result from wrapper source'
     Invoke-Expression $m.Value
@@ -507,7 +648,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     Remove-Item -Recurse -Force $exportDir -ErrorAction SilentlyContinue
   }
   Case 'Write-Result text: design-workspace zero-export still non-empty' {
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Write-Result \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract Write-Result from wrapper source'
     Invoke-Expression $m.Value
@@ -523,7 +664,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     Assert-True ($out -match 'no files exported') 'zero-export missing explicit nothing-exported signal'
   }
   Case 'Write-Result text: artifact lane still prints only response' {
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Write-Result \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract Write-Result from wrapper source'
     Invoke-Expression $m.Value
@@ -537,7 +678,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
     Assert-True ($out -eq 'ONLY_RESPONSE') ('artifact text mode regressed: ' + $out)
   }
   Case 'Write-Result json: design-workspace output unchanged fields' {
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     $m = [regex]::Match($src, '(?s)function Write-Result \{.*?\r?\n\}')
     Assert-True $m.Success 'could not extract Write-Result from wrapper source'
     Invoke-Expression $m.Value
@@ -827,7 +968,7 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
   }
   Case 'repo-sandbox: reparse verification gate exists and passes on clean fixture' {
     # Source-level: Assert-NoReparsePointsInTree is present and zero-on-clean.
-    $src = [IO.File]::ReadAllText($wrapper)
+    $src = (Get-KimiWrapperSource)
     Assert-True ($src.Contains('function Assert-NoReparsePointsInTree')) 'Assert-NoReparsePointsInTree missing from wrapper'
     Assert-True ($src.Contains('Repo sandbox reparse verification failed')) 'reparse fail-closed message missing'
     $start = $src.IndexOf('function Assert-NoReparsePointsInTree {')
@@ -862,6 +1003,34 @@ public static extern System.IntPtr LocalFree(System.IntPtr hMem);
       Assert-True ($exit -eq 0 -and $json.lane -eq 'repo-sandbox' -and [int]$json.sandbox_file_count -gt 0) ('reparse gate failed on clean fixture: ' + ($json | ConvertTo-Json -Compress))
     }
     finally { Remove-Item -LiteralPath $fixture -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  Case 'guarded config keeps source top-level default_model above the appended rules' {
+    # Live repro (kimi 0.34.0): prepending [[permission.rules]] before a source config that
+    # starts with default_model made kimi report "no default model configured" (exit 1),
+    # because TOML folds the leading top-level key into the last rules table. Source must
+    # come FIRST; deny rules must still be present (security intact).
+    $src = (Get-KimiWrapperSource)
+    $start = $src.IndexOf('function New-GuardedRuntimeConfig {')
+    $rest = $src.Substring($start + 1)
+    $end = $start + 1 + $rest.IndexOf("`nfunction ")
+    Assert-True ($start -ge 0 -and $end -gt $start) 'could not extract New-GuardedRuntimeConfig'
+    Invoke-Expression $src.Substring($start, $end - $start)
+    $script:ResearchSwarmAllowTools = @('WebSearch')
+    $script:DesignWorkspaceScopedTools = @('Write')
+    $srcCfg = Join-Path $temp ('cfg-src-' + [guid]::NewGuid().ToString('n') + '.toml')
+    $dstCfg = Join-Path $temp ('cfg-dst-' + [guid]::NewGuid().ToString('n') + '.toml')
+    [IO.File]::WriteAllText($srcCfg, "default_model = `"kimi-code/k3`"`n[models.`"kimi-code/k3`"]`nmodel = `"k3`"`n")
+    try {
+      New-GuardedRuntimeConfig -SourceConfig $srcCfg -DestinationConfig $dstCfg -ImagesDirectory $temp -AllowImageRead $false -ResearchSwarm $false -WorkspaceDirectory $temp -DesignWorkspace $false -SandboxDirectory $temp -RepoSandbox $false -PromptFilePath (Join-Path $temp 'p.txt')
+      $composed = [IO.File]::ReadAllText($dstCfg)
+      $dmIdx = $composed.IndexOf('default_model')
+      $ruleIdx = $composed.IndexOf('[[permission.rules]]')
+      Assert-True ($dmIdx -ge 0 -and $ruleIdx -ge 0 -and $dmIdx -lt $ruleIdx) 'default_model must appear before the permission rules (source-first)'
+      Assert-True ($composed.Contains('decision = "deny"')) 'deny rules missing from composed config (security regression)'
+    }
+    finally {
+      Remove-Item -LiteralPath $srcCfg, $dstCfg -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 finally {

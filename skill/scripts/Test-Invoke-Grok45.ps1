@@ -36,11 +36,12 @@ function Assert-True([bool]$Condition, [string]$Message) { if (-not $Condition) 
       else { '"' + ($token -replace '(\\*)"', '$1$1\"' -replace '(\\+)$', '$1$1') + '"' }
     }) -join " "
   }
-  function Run-Wrapper([string]$Scenario, [int]$Timeout = 10, [switch]$Auto, [switch]$Review, [switch]$ReadOnly, [string]$Mode = "json", [int]$MinimumAuditPasses = 1, [int]$MaxTurns = 0, [switch]$Lean, [switch]$Memory, [switch]$Subagents, [string]$Resume = "", [string]$Effort = "high", [int]$FirstTurnTimeout = -1, [int]$HeartbeatSeconds = -1) {
+  function Run-Wrapper([string]$Scenario, [int]$Timeout = 10, [switch]$Auto, [switch]$Review, [switch]$ReadOnly, [string]$Mode = "json", [int]$MinimumAuditPasses = 1, [int]$MaxTurns = 0, [switch]$Lean, [switch]$Memory, [switch]$Subagents, [string]$Resume = "", [string]$Effort = "high", [int]$FirstTurnTimeout = -1, [int]$HeartbeatSeconds = -1, [switch]$IsolatedOnly) {
   $env:FLEET_GROK_FAKE_SCENARIO = $Scenario
   $args = @("-NoProfile", "-NoLogo", "-ExecutionPolicy", "Bypass", "-File", $wrapper, "-Prompt", "offline contract", "-WorkingDirectory", $wrapperWorktree, "-Mode", $Mode, "-TimeoutSeconds", [string]$Timeout, "-MinimumAuditPasses", [string]$MinimumAuditPasses)
   if ($HeartbeatSeconds -ge 1) { $args += @("-HeartbeatSeconds", [string]$HeartbeatSeconds) }
   if ($Auto) { $args += @("-BashCapability", "Auto", "-IsolatedWorktree") }
+    if ($IsolatedOnly) { $args += "-IsolatedWorktree" }
     if ($Review) { $args += "-Review" }
     if ($ReadOnly) { $args += "-ReadOnly" }
     if ($MaxTurns -gt 0) { $args += @("-MaxTurns", [string]$MaxTurns) }
@@ -203,7 +204,7 @@ if ($scenario -eq "windows-shell-contract" -and -not $isBashProbe) {
   if ($env:NO_COLOR -or $env:FORCE_COLOR) { exit 30 }
   $promptIndex = [Array]::IndexOf($Args, "--prompt-file")
   $promptText = [IO.File]::ReadAllText($Args[$promptIndex + 1])
-  if ($promptText -notmatch "Windows PowerShell 5.1" -or $promptText -notmatch "Never use Bash heredocs" -or $promptText -notmatch "Never use node -e" -or $promptText -notmatch "search_replace" -or $promptText -notmatch "helper scripts/temp source files" -or $promptText -notmatch "Terra/Codex owns full suites") { exit 31 }
+  if ($promptText -notmatch "Windows PowerShell 5.1" -or $promptText -notmatch "Never use Bash heredocs" -or $promptText -notmatch "Never use node -e" -or $promptText -notmatch "search_replace" -or $promptText -notmatch "helper scripts/temp source files" -or $promptText -notmatch "authoritative barrier gate") { exit 31 }
 }
 if ($isBashProbe) {
   if ($scenario -eq "bash-schema") { [Console]::Error.WriteLine("auto_background_on_timeout requires enabled_background"); exit 1 }
@@ -473,6 +474,18 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     $cache = [IO.File]::ReadAllText((Join-Path $fakeHome "fleet\bash-capability-v2-9.9.9-fake.json")) | ConvertFrom-Json
     Assert-True ([bool]$cache.'9.9.9-fake') "expected exact-version cache"
   }
+  Case "isolated impl lane defaults to bash + subagents (grok-1.0.0 freedom)" {
+    Remove-Item -LiteralPath (Join-Path $fakeHome "fleet\bash-capability-v2-9.9.9-fake.json") -Force -ErrorAction SilentlyContinue
+    # ONLY -IsolatedWorktree, no -BashCapability/-EnableSubagents/-EnableWebSearch.
+    $run = Run-Wrapper "success" 10 -IsolatedOnly
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($run.ExitCode -eq 0 -and $json.bash_enabled -and $json.subagents_enabled) "isolated lane should default bash+subagents ON without explicit flags: $($run.Raw)"
+  }
+  Case "explicit -BashCapability Disabled still wins on an isolated lane" {
+    $run = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt x -WorkingDirectory $wrapperWorktree -IsolatedWorktree -BashCapability Disabled -Mode json -TimeoutSeconds 10 2>&1
+    $j = ($run -join "`n") | ConvertFrom-Json
+    Assert-True (-not $j.bash_enabled) "explicit -BashCapability Disabled must override the isolated-lane default"
+  }
   Case "known Bash schema failure caches disabled" {
     Remove-Item -LiteralPath (Join-Path $fakeHome "fleet\bash-capability-v2-9.9.9-fake.json") -Force -ErrorAction SilentlyContinue
     $run = Run-Wrapper "bash-schema" 10 -Auto
@@ -489,7 +502,10 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     $old = $ErrorActionPreference
     try {
       $ErrorActionPreference = "Continue"
-      $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt x -WorkingDirectory $jwt -IsolatedWorktree -Mode json -TimeoutSeconds 10 2>&1
+      # -BashCapability Disabled isolates the reparse-point guard (runs for any -IsolatedWorktree);
+      # without it the new isolated-lane default (BashCapability Auto) fires the git-worktree guard
+      # first and this bare (non-git) fixture refuses there instead -- still safe, wrong message.
+      $raw = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $wrapper -Prompt x -WorkingDirectory $jwt -IsolatedWorktree -BashCapability Disabled -Mode json -TimeoutSeconds 10 2>&1
       $code = $LASTEXITCODE
     } finally { $ErrorActionPreference = $old }
     $text = ($raw -join "`n")
@@ -498,9 +514,11 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     Remove-Item -LiteralPath $jbase -Recurse -Force -ErrorAction SilentlyContinue
   }
   Case "first-turn alive review completes normally" {
-    $run = Run-Wrapper "first-turn-alive" 30 -Review -FirstTurnTimeout 1
+    # 5s window: the ALIVE fixture proves detection, not latency — a 1s window raced child
+    # powershell spawn (AV scan on freshly written scripts) and flaked. Dead cases keep 1s.
+    $run = Run-Wrapper "first-turn-alive" 30 -Review -FirstTurnTimeout 5
     $json = $run.Raw | ConvertFrom-Json
-    Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "ok" -and $json.lane -eq "read_only" -and $json.failure_category -ne "no_first_turn" -and $json.timed_out -ne $true -and $json.first_turn_timeout_seconds -eq 1 -and $json.response -match "Alive") "expected alive first-turn success: $($run.Raw)"
+    Assert-True ($run.ExitCode -eq 0 -and $json.status -eq "ok" -and $json.lane -eq "read_only" -and $json.failure_category -ne "no_first_turn" -and $json.timed_out -ne $true -and $json.first_turn_timeout_seconds -eq 5 -and $json.response -match "Alive") "expected alive first-turn success: $($run.Raw)"
   }
   Case "first-turn dead review kills early with no_first_turn" {
     $run = Run-Wrapper "first-turn-dead" 30 -Review -FirstTurnTimeout 1

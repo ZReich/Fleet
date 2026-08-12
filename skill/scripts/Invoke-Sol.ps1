@@ -8,8 +8,16 @@
 # PowerShell 5.1 safe: no ternary / null-coalescing / && ; ASCII source only.
 [CmdletBinding(DefaultParameterSetName = 'Run')]
 param(
-  [Parameter(Mandatory = $true, ParameterSetName = 'Run')]
+  [Parameter(Mandatory = $false, ParameterSetName = 'Run')]
   [string]$Prompt,
+
+  # Large / metacharacter-heavy briefs: pass a file instead of -Prompt. Mirrors
+  # Invoke-Grok45 / Invoke-Opus48 so Sol can be dispatched straight from the Bash tool
+  # without the PowerShell '(Get-Content -Raw ...)' sub-expression, which the Bash tool
+  # eval-parses and chokes on (a real gotcha hit 2026-08-06). Exactly one of -Prompt /
+  # -PromptFile is required in the Run set.
+  [Parameter(Mandatory = $false, ParameterSetName = 'Run')]
+  [string]$PromptFile,
 
   [Parameter(ParameterSetName = 'Probe')]
   [switch]$Probe,                                   # SOL_OK model-resolution + liveness probe
@@ -126,10 +134,27 @@ function Stop-Tree {
 
 try {
   if ($Probe) { $Prompt = 'Reply with exactly the token SOL_OK and nothing else.' }
-  if ([string]::IsNullOrWhiteSpace($Prompt)) { throw 'Prompt is empty.' }
+  if (-not $Probe -and [string]::IsNullOrWhiteSpace($Prompt) -and -not [string]::IsNullOrWhiteSpace($PromptFile)) {
+    if (-not (Test-Path -LiteralPath $PromptFile -PathType Leaf)) { throw "PromptFile not found: $PromptFile" }
+    $Prompt = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $PromptFile).Path, [Text.UTF8Encoding]::new($false))
+  }
+  if ([string]::IsNullOrWhiteSpace($Prompt)) { throw 'Prompt is empty (pass -Prompt or -PromptFile).' }
   if (-not $Probe) { $Prompt = $Prompt + "`n" + $fleetTerseTrailer }
 
   $launcher = Resolve-CodexLauncher
+
+  # Isolate this lane's CODEX_HOME so parallel Sol/Terra lanes NEVER share
+  # ~/.codex/models_cache.json. That shared cache is the source of BOTH the model_cache_skew
+  # (a foreign-version codex re-stamps it, triggering the 'failed to renew cache TTL' error)
+  # AND the parallel-lane write race (every codex process rewrites the one cache each run).
+  # An isolated home => the cache is written only by the pinned codex => always self-stamped,
+  # no renew-error, and no two lanes touch the same file. Restored + removed in finally.
+  $script:priorCodexHome = $env:CODEX_HOME
+  $script:laneHome = $null
+  try {
+    $script:laneHome = (& (Join-Path $PSScriptRoot 'New-CodexLaneHome.ps1') -Label 'sol' 2>$null | Select-Object -Last 1)
+    if (-not [string]::IsNullOrWhiteSpace($script:laneHome)) { $env:CODEX_HOME = $script:laneHome }
+  } catch { }
 
   # Build the codex arg string. Force model + effort so Sol never inherits the config
   # default (xhigh) which silently makes Sol slow and reads as a hang.
@@ -220,7 +245,7 @@ try {
   $cacheSkew = ($stderr -match 'failed to renew cache TTL' -or $stderr -match 'supports_reasoning_summaries')
   $skewNote = $null
   if ($cacheSkew) {
-    $skewNote = 'codex model-cache TTL renewal failed (supports_reasoning_summaries). Installed codex-cli lags the server model-catalog schema; Sol/Terra fall back to embedded defaults and re-fetch every run. Fix: promote a newer codex via the leased CLI-update flow (see cli-update-status.json codex row).'
+    $skewNote = 'codex model-cache TTL renewal failed (supports_reasoning_summaries) DESPITE the preflight heal. Root cause is a version-stamp mismatch: a foreign-version codex stamped ~/.codex/models_cache.json. The preflight (Repair-CodexModelsCache.ps1) clears a stale stamp only when it differs from the approved-clis codex pin -- so if this still fired, the codex that actually launched is NOT the pinned version (FLEET_CODEX_LAUNCHER override or an nvm/global codex on a different version sharing the cache). Fix: point every codex lane at one version, or pass -CodexVersion to the preflight. Non-fatal: Sol falls back to embedded defaults and re-fetches.'
   }
 
   $response = $stdout.Trim()
@@ -272,4 +297,10 @@ try {
 finally {
   if ($proc -and -not $proc.HasExited) { Stop-Tree $proc }
   if ($proc) { try { $proc.Dispose() } catch { } }
+  # Restore CODEX_HOME and remove this lane's isolated home.
+  if ($null -ne $script:priorCodexHome) { $env:CODEX_HOME = $script:priorCodexHome }
+  else { Remove-Item Env:CODEX_HOME -ErrorAction SilentlyContinue }
+  if (-not [string]::IsNullOrWhiteSpace($script:laneHome)) {
+    Remove-Item -LiteralPath $script:laneHome -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }

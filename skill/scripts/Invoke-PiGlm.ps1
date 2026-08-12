@@ -17,6 +17,12 @@ param(
 
   [switch]$NoTools,
 
+  # Tree to run in. A live -ReadOnly GLM crawl reads THIS directory; under parallel
+  # multi-worktree runs a defaulted cwd is the shared main checkout, which another
+  # session may have on a different branch -> GLM silently reviews the wrong tree
+  # (L321c). Pass the lane's worktree explicitly; the resolved dir + branch are recorded.
+  [string]$WorkingDirectory,
+
   [ValidateRange(1, 86400)]
   [int]$TimeoutSeconds = 900,
 
@@ -184,7 +190,21 @@ try {
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.CreateNoWindow = $true
-  $psi.WorkingDirectory = (Get-Location).Path
+  # Resolve the tree to run in (L321c). Explicit -WorkingDirectory pins the lane to its
+  # worktree; a default is the orchestrator cwd, which is unsafe for a live -ReadOnly crawl
+  # under parallel runs. Record the resolved dir + branch; warn loud if -ReadOnly defaulted.
+  $wdExplicit = $PSBoundParameters.ContainsKey('WorkingDirectory') -and -not [string]::IsNullOrWhiteSpace($WorkingDirectory)
+  if ($wdExplicit) {
+    if (-not (Test-Path -LiteralPath $WorkingDirectory -PathType Container)) { throw "WorkingDirectory not found: $WorkingDirectory" }
+    $script:resolvedWd = (Resolve-Path -LiteralPath $WorkingDirectory).Path
+  }
+  else { $script:resolvedWd = (Get-Location).Path }
+  $script:wdBranch = (& git -C $script:resolvedWd rev-parse --abbrev-ref HEAD 2>$null | Select-Object -First 1)
+  if ([string]::IsNullOrWhiteSpace($script:wdBranch)) { $script:wdBranch = 'not-a-git-repo' }
+  if ($ReadOnly -and -not $NoTools -and -not $wdExplicit) {
+    [Console]::Error.WriteLine("WARN glm: -ReadOnly live crawl using DEFAULT cwd $script:resolvedWd (branch $script:wdBranch) -- pass -WorkingDirectory to pin the lane's worktree so a parallel run cannot read the wrong tree (L321c).")
+  }
+  $psi.WorkingDirectory = $script:resolvedWd
 
   $proc = New-Object System.Diagnostics.Process
   $proc.StartInfo = $psi
@@ -280,6 +300,8 @@ try {
     provider = $ExpectedProvider
     model = $ExpectedModel
     pi_path = [string]$launch.FileName
+    working_directory = [string]$script:resolvedWd
+    working_tree_branch = [string]$script:wdBranch
     packet_manifest_sha256 = if ($packetAttestation) { [string]$packetAttestation.packet_sha256 } else { $null }
     artifacts = @($artifacts)
     response_model = $null

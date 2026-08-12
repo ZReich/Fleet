@@ -8,14 +8,44 @@ function Assert-True([bool]$Condition, [string]$Message) {
   if (-not $Condition) { throw "ASSERTION FAILED: $Message" }
 }
 
+function New-ValidPreflightPair([string]$Directory, [string]$RunId = "run-packet-test") {
+  $sv = [ordered]@{
+    schema_version = "1"
+    run_id = $RunId
+    selected = @([ordered]@{ lane_id = "v-sol"; voice = "sol"; probe_profile = "plan" })
+  } | ConvertTo-Json -Depth 5 -Compress
+  $pf = [ordered]@{
+    schema_version = "1"
+    run_id = $RunId
+    status = "READY"
+    status_line = "review-preflight: READY | selected: 1 | passed: 1 | cached: 0 | failed: 0"
+    selected = 1
+    passed = 1
+    cached = 0
+    failed = 0
+    voices = @([ordered]@{ lane_id = "v-sol"; voice = "sol"; probe_profile = "plan"; result = "pass"; cache_hit = $false })
+  } | ConvertTo-Json -Depth 5 -Compress
+  [IO.File]::WriteAllText((Join-Path $Directory "selected-voices.json"), $sv + "`n")
+  [IO.File]::WriteAllText((Join-Path $Directory "review-preflight.json"), $pf + "`n")
+}
+
+# Shared RED-evidence fixture (Sol D2): behavior/hard test-results must carry a failing-first proof.
+$script:RedLogText = "RED control: 1 test failed`n"
+$redShaHasher = [Security.Cryptography.SHA256]::Create()
+try { $script:RedLogSha = -join ($redShaHasher.ComputeHash([Text.UTF8Encoding]::new($false).GetBytes($script:RedLogText)) | ForEach-Object { $_.ToString('x2') }) } finally { $redShaHasher.Dispose() }
+$script:RedControls = @(@{ id = "R1"; command = "run failing test first"; expected_failure = "assert fires"; observed_exit_code = 1; sample = "1 test failed"; evidence_path = "red-1.log"; evidence_sha256 = $script:RedLogSha })
+
 function New-ValidPacket([string]$Directory) {
   New-Item -ItemType Directory -Force -Path $Directory | Out-Null
+  [IO.File]::WriteAllText((Join-Path $Directory "red-1.log"), $script:RedLogText)
+  [IO.File]::WriteAllText((Join-Path $root 'a.txt'), "anchored source`n")
   [IO.File]::WriteAllText((Join-Path $Directory "base.sha"), (("a" * 40) + [Environment]::NewLine))
   [IO.File]::WriteAllText((Join-Path $Directory "final.diff"), "diff --git a/a.txt b/a.txt`n")
   [IO.File]::WriteAllText((Join-Path $Directory "touched-files.txt"), "a.txt`n")
-  [IO.File]::WriteAllText((Join-Path $Directory "locked-plan.md"), "# Locked plan`n")
+  [IO.File]::WriteAllText((Join-Path $Directory "locked-plan.md"), "# Locked plan`nreview_profile: general`n")
   [IO.File]::WriteAllText((Join-Path $Directory "acceptance-evidence.md"), "# Acceptance evidence`n")
   [IO.File]::WriteAllText((Join-Path $Directory "gate-evidence.md"), "# Gate evidence`n")
+  New-ValidPreflightPair $Directory
 }
 
 function Assert-Fails([string]$Directory, [string]$Message) {
@@ -30,15 +60,25 @@ function Assert-Fails([string]$Directory, [string]$Message) {
 }
 
 try {
+  New-Item -ItemType Directory -Force -Path $root | Out-Null
+  & git -C $root init -q 2>$null | Out-Null
+  & git -C $root config user.email 'packet-test@example.com' | Out-Null
+  & git -C $root config user.name 'Packet Test' | Out-Null
+  New-Item -ItemType Directory -Force -Path (Join-Path $root 'scripts') | Out-Null
+  [IO.File]::WriteAllText((Join-Path $root 'scripts\Invoke-Grok45.ps1'), "# anchor`n")
+  [IO.File]::WriteAllText((Join-Path $root 'scripts\New.ps1'), "# anchor`n")
   $valid = Join-Path $root "valid"
   New-ValidPacket $valid
   $manifest = Join-Path $valid "packet-manifest.json"
   $packet = (& $scriptPath -PacketDir $valid -OutputPath $manifest | ConvertFrom-Json)
   Assert-True ($packet.schema_version -eq "1") "schema version"
   Assert-True ($packet.review_risk -eq "mechanical") "default review_risk mechanical"
-  Assert-True ($packet.artifact_paths.Count -eq 6) "required artifact count"
+  Assert-True ($packet.artifact_paths.Count -eq 8) "required artifact count (6 core + preflight pair)"
   Assert-True ($packet.artifact_paths[0] -like "*base.sha") "stable artifact ordering"
+  $artNames = @($packet.artifacts | ForEach-Object { $_.name })
+  Assert-True ($artNames -contains "selected-voices.json" -and $artNames -contains "review-preflight.json") "preflight pair in manifest hashes"
   Assert-True ($packet.packet_sha256 -match '^[0-9a-f]{64}$') "packet hash"
+  Assert-True ($packet.frozen_touched_files.Count -eq 1 -and $packet.frozen_touched_files[0].path -eq 'a.txt' -and $packet.frozen_touched_files[0].sha256 -match '^[0-9a-f]{64}$') "touched file content anchor"
   Assert-True (Test-Path -LiteralPath $manifest -PathType Leaf) "manifest write"
   $prompt = Join-Path $root "review-prompt.md"
   [IO.File]::WriteAllText($prompt, "Review frozen packet.")
@@ -106,7 +146,7 @@ try {
   New-ValidPacket $mechanical
   $mechManifest = Join-Path $mechanical "packet-manifest.json"
   $mechPacket = (& $scriptPath -PacketDir $mechanical -OutputPath $mechManifest | ConvertFrom-Json)
-  Assert-True ($mechPacket.review_risk -eq "mechanical" -and $mechPacket.artifact_paths.Count -eq 6) "mechanical default without risk param"
+  Assert-True ($mechPacket.review_risk -eq "mechanical" -and $mechPacket.artifact_paths.Count -eq 8) "mechanical default without risk param"
   $mechAttest = (& $manifestAssertionPath -ManifestPath $mechManifest -ArtifactFile @($mechPacket.artifact_paths) | ConvertFrom-Json)
   Assert-True ($mechAttest.status -eq "ok") "mechanical re-attestation"
 
@@ -121,6 +161,7 @@ try {
     schema_version = "1"
     status = "passed"
     commands = @(@{ command = "powershell -NoProfile -File scripts/Test-FleetContract.ps1"; exit_code = 0; status = "passed"; sample = "14 cases" })
+    red_denominator = 1; red_observed = 1; red_controls = $script:RedControls
   } | ConvertTo-Json -Depth 5 -Compress
   $fallowResults = @{ schema_version = "1"; status = "passed"; findings = @(); summary = @{ new_findings = 0 } } | ConvertTo-Json -Compress
   [IO.File]::WriteAllText((Join-Path $hard "test-results.json"), $testResults + "`n")
@@ -129,9 +170,9 @@ try {
   $hardManifest = Join-Path $hard "packet-manifest.json"
   $hardPacket = (& $scriptPath -PacketDir $hard -ReviewRisk hard -OutputPath $hardManifest | ConvertFrom-Json)
   Assert-True ($hardPacket.review_risk -eq "hard") "hard review_risk field"
-  Assert-True ($hardPacket.artifact_paths.Count -eq 9) "hard packet artifact count with caller+gates"
+  Assert-True ($hardPacket.artifact_paths.Count -eq 12) "hard packet artifact count with preflight+caller+gates+red"
   $names = @($hardPacket.artifacts | ForEach-Object { $_.name })
-  Assert-True ($names[0] -eq "base.sha" -and $names[6] -eq "caller-context.md" -and $names[7] -eq "test-results.json" -and $names[8] -eq "fallow-results.json") "stable artifact order"
+  Assert-True ($names[0] -eq "base.sha" -and $names[6] -eq "selected-voices.json" -and $names[7] -eq "review-preflight.json" -and $names[8] -eq "caller-context.md" -and $names[9] -eq "red:red-1.log" -and $names[10] -eq "test-results.json" -and $names[11] -eq "fallow-results.json") "stable artifact order"
   $hardAttest = (& $manifestAssertionPath -ManifestPath $hardManifest -ArtifactFile @($hardPacket.artifact_paths) | ConvertFrom-Json)
   Assert-True ($hardAttest.status -eq "ok" -and $hardAttest.packet_sha256 -eq $hardPacket.packet_sha256) "hard re-attestation"
 
@@ -150,7 +191,7 @@ try {
   )) {
     $evDir = Join-Path $root $case.dir
     New-ValidPacket $evDir
-    $ev = @{ schema_version = "1"; status = "passed"; commands = @($case.entry) } | ConvertTo-Json -Depth 5 -Compress
+    $ev = @{ schema_version = "1"; status = "passed"; commands = @($case.entry); red_denominator = 1; red_observed = 1; red_controls = $script:RedControls } | ConvertTo-Json -Depth 5 -Compress
     [IO.File]::WriteAllText((Join-Path $evDir "test-results.json"), $ev + "`n")
     [IO.File]::WriteAllText((Join-Path $evDir "fallow-results.json"), $fallowResults + "`n")
     $evBlocked = $false
@@ -162,13 +203,13 @@ try {
   # A failed command needs no sample (nothing to prove about a failure).
   $failDir = Join-Path $root "failed-no-sample"
   New-ValidPacket $failDir
-  $failEv = @{ schema_version = "1"; status = "failed"; commands = @(@{ command = "npx vitest run"; exit_code = 1; status = "failed" }) } | ConvertTo-Json -Depth 5 -Compress
+  $failEv = @{ schema_version = "1"; status = "failed"; commands = @(@{ command = "npx vitest run"; exit_code = 1; status = "failed" }); red_denominator = 1; red_observed = 1; red_controls = $script:RedControls } | ConvertTo-Json -Depth 5 -Compress
   [IO.File]::WriteAllText((Join-Path $failDir "test-results.json"), $failEv + "`n")
   [IO.File]::WriteAllText((Join-Path $failDir "fallow-results.json"), $fallowResults + "`n")
   Assert-True ((& $scriptPath -PacketDir $failDir -ReviewRisk behavior | ConvertFrom-Json).review_risk -eq "behavior") "failed command without sample stays valid"
 
   # Fallow not_measured: explicit skip with reason; no new_findings claim.
-  $goodTests = @{ schema_version = "1"; status = "passed"; commands = @(@{ command = "npx vitest run"; exit_code = 0; status = "passed"; sample = "274 tests" }) } | ConvertTo-Json -Depth 5 -Compress
+  $goodTests = @{ schema_version = "1"; status = "passed"; commands = @(@{ command = "npx vitest run"; exit_code = 0; status = "passed"; sample = "274 tests" }); red_denominator = 1; red_observed = 1; red_controls = $script:RedControls } | ConvertTo-Json -Depth 5 -Compress
   $nmOk = Join-Path $root "fallow-not-measured"
   New-ValidPacket $nmOk
   [IO.File]::WriteAllText((Join-Path $nmOk "test-results.json"), $goodTests + "`n")
@@ -300,11 +341,55 @@ try {
   )) {
     $sDir = Join-Path $root $case.d; New-ValidPacket $sDir
     [IO.File]::WriteAllText((Join-Path $sDir "touched-files.txt"), $case.t)
-    [IO.File]::WriteAllText((Join-Path $sDir "locked-plan.md"), $case.p + "`n")
+    [IO.File]::WriteAllText((Join-Path $sDir "locked-plan.md"), $case.p + "`nreview_profile: general`n")
     $err = $null; try { & $scriptPath -PacketDir $sDir | Out-Null } catch { $err = $_.Exception.Message }
     if ($case.f) { Assert-True ($null -ne $err) $case.l; Assert-True ($err -like "*$($case.n)*") ($case.l + " names missing") }
     else { Assert-True ($null -eq $err) ($case.l + $(if ($err) { ": $err" } else { "" })) }
   }
+
+  # T2 preflight binding: missing / BLOCKED / run_id mismatch fail closed; READY hashes.
+  $missPf = Join-Path $root "missing-preflight"
+  New-ValidPacket $missPf
+  Remove-Item -LiteralPath (Join-Path $missPf "review-preflight.json") -Force
+  Assert-Fails $missPf "missing review-preflight.json must block packet freeze"
+
+  $missSv = Join-Path $root "missing-selected-voices"
+  New-ValidPacket $missSv
+  Remove-Item -LiteralPath (Join-Path $missSv "selected-voices.json") -Force
+  Assert-Fails $missSv "missing selected-voices.json must block packet freeze"
+
+  $blockedPf = Join-Path $root "blocked-preflight"
+  New-ValidPacket $blockedPf
+  $blockedBody = [ordered]@{
+    schema_version = "1"
+    run_id = "run-packet-test"
+    status = "BLOCKED"
+    status_line = "review-preflight: BLOCKED | selected: 1 | passed: 0 | failed: 1 | substitution: REQUIRED"
+    selected = 1; passed = 0; cached = 0; failed = 1
+    voices = @()
+  } | ConvertTo-Json -Depth 5 -Compress
+  [IO.File]::WriteAllText((Join-Path $blockedPf "review-preflight.json"), $blockedBody + "`n")
+  Assert-Fails $blockedPf "BLOCKED preflight status must block packet freeze"
+
+  $mismatch = Join-Path $root "runid-mismatch"
+  New-ValidPacket $mismatch
+  $badRun = [ordered]@{
+    schema_version = "1"
+    run_id = "other-run-id"
+    status = "READY"
+    status_line = "review-preflight: READY | selected: 1 | passed: 1 | cached: 0 | failed: 0"
+    selected = 1; passed = 1; cached = 0; failed = 0
+    voices = @()
+  } | ConvertTo-Json -Depth 5 -Compress
+  [IO.File]::WriteAllText((Join-Path $mismatch "review-preflight.json"), $badRun + "`n")
+  Assert-Fails $mismatch "run_id mismatch between selected-voices and preflight must block"
+
+  $readyOk = Join-Path $root "ready-preflight-ok"
+  New-ValidPacket $readyOk
+  $readyPacket = (& $scriptPath -PacketDir $readyOk | ConvertFrom-Json)
+  $readyNames = @($readyPacket.artifacts | ForEach-Object { $_.name })
+  Assert-True ($readyNames -contains "selected-voices.json" -and $readyNames -contains "review-preflight.json") "READY preflight lands both files in manifest hashes"
+  Assert-True ($readyPacket.artifact_paths.Count -eq 8) "READY mechanical packet has 8 hashed artifacts"
 
   Write-Output "PASS Test-Get-FleetReviewPacket"
 }

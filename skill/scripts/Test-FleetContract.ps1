@@ -5,15 +5,17 @@ $utf8 = New-Object Text.UTF8Encoding $false
 . (Join-Path $PSScriptRoot 'FleetReceiptSignature.Helpers.ps1')
 $root = Join-Path $env:TEMP ('fleet-contract-' + [guid]::NewGuid().ToString('N'))
 $leaseHome = Join-Path $root 'home'; $oldProfile = $env:USERPROFILE
-$subPass = 0; $subTotal = 8; $mutOk = 0; $mutTotal = 4; $failed = $false
+$subPass = 0; $subTotal = 9; $mutOk = 0; $mutTotal = 6; $failed = $false
 $assertRi = Join-Path $PSScriptRoot 'Assert-FleetReviewIntegrity.ps1'
 $assertAdv = Join-Path $PSScriptRoot 'Assert-FleetAdversarialReview.ps1'
 $assertMr = Join-Path $PSScriptRoot 'Assert-FleetMergeReadiness.ps1'
+$assertCert = Join-Path $PSScriptRoot 'Assert-FleetReviewCertification.ps1'
 $shaA = ('a' * 64); $shaB = ('b' * 64); $shaC = ('c' * 64); $shaPlan = ('d' * 64)
 $ts0 = '2026-08-05T01:00:00.0000000Z'; $ts1 = '2026-08-05T01:05:00.0000000Z'
 $ts6 = '2026-08-05T01:06:00.0000000Z'; $ts10 = '2026-08-05T01:10:00.0000000Z'
 $pad = ('evidence detail line for substantive review body. ' * 6)
-$voiceBody = "## Adversarial review`n### Findings`n- scripts/x.ps1:10 HIGH - problem found. Fix required.`n$pad`n"
+# Canonical verdict grammar (FleetReviewGrammar.Helpers.ps1): HIGH finding => NO-GO terminal.
+$voiceBody = "## Adversarial review`n$pad`n`nVERDICT: NO-GO`nFINDINGS:`n- HIGH | F001 | scripts/x.ps1:10 | problem found, fix required`n"
 $okBody = "## Findings`n- none material`nVERDICT: CLEAR"; $refuseBody = 'I cannot help with that request.'
 $rlF = @('schema_version','receipt_type','run_id','task_id','lane_id','voice_id','review_role','requested_model','observed_model','model_evidence','emitter_id','input_packet_sha256','expected_lane_manifest_sha256','locked_plan_sha256','review_profile','charter_path','review_tier','result_path','charter_sha256','result_sha256','exit_code','outcome','refusal_reason','fallback_of','started_at','completed_at','sig_alg','key_id','signature')
 $msF = @('schema_version','receipt_type','run_id','task_id','lane_id','stage','required','status','requested_model','observed_model','model_evidence','effort','input_packet_sha256','emitter_id','locked_plan_sha256','stage_set_sha256','review_tier','review_profile','charter_path','result_path','result_sha256','charter_sha256','exit_code','outcome','fallback_of','failure_category','findings','evidence_refs','output_artifacts','started_at','completed_at','model','sig_alg','signature')
@@ -78,7 +80,7 @@ function New-RlObj {
   param([string]$Lane,[string]$Model,[string]$Outcome='completed',[string]$Role='security-review',[string]$ResultPath,[string]$ResultSha,[string]$Started=$ts0,[string]$Completed=$ts1,[object]$FallbackOf=$null,[object]$Refusal=$null,[string]$Profile='security-sensitive',[string]$Tier='FULL',[string]$Man='',[string]$PlanSha='')
   if ([string]::IsNullOrWhiteSpace($Man)) { $Man = $script:ManSha }
   if ([string]::IsNullOrWhiteSpace($PlanSha)) { $PlanSha = $script:BoundPlanSha; if ([string]::IsNullOrWhiteSpace($PlanSha)) { $PlanSha = $shaPlan } }
-  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='review_lane'; run_id=$script:RunId; task_id='T-sec'; lane_id=$Lane; voice_id=$Model; review_role=$Role; requested_model=$Model; observed_model=$Model; model_evidence='test-fixture'; emitter_id='test-emitter'; input_packet_sha256=$shaA; expected_lane_manifest_sha256=$Man; locked_plan_sha256=$PlanSha; review_profile=$Profile; charter_path='charter.md'; review_tier=$Tier; result_path=$ResultPath; charter_sha256=$shaB; result_sha256=$ResultSha; exit_code=0; outcome=$Outcome; refusal_reason=$Refusal; fallback_of=$FallbackOf; started_at=$Started; completed_at=$Completed; sig_alg='HMAC-SHA256'; key_id=$script:KeyId }
+  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='review_lane'; run_id=$script:RunId; task_id='T-sec'; lane_id=$Lane; voice_id=$Model; review_role=$Role; requested_model=$Model; observed_model=$Model; model_evidence='unified-log'; emitter_id='test-emitter'; input_packet_sha256=$shaA; expected_lane_manifest_sha256=$Man; locked_plan_sha256=$PlanSha; review_profile=$Profile; charter_path='charter.md'; review_tier=$Tier; result_path=$ResultPath; charter_sha256=$shaB; result_sha256=$ResultSha; exit_code=0; outcome=$Outcome; refusal_reason=$Refusal; fallback_of=$FallbackOf; started_at=$Started; completed_at=$Completed; sig_alg='HMAC-SHA256'; key_id=$script:KeyId }
 }
 function Write-SignedRl([string]$Path, $Obj, [byte[]]$Secret = $null) {
   if ($null -eq $Secret) { $Secret = $script:Secret }
@@ -159,6 +161,7 @@ $subs = @(
   @{ N='Test-NewFleetMergeReadinessReceipt'; S=(Join-Path $PSScriptRoot 'Test-NewFleetMergeReadinessReceipt.ps1'); E=@() }
   @{ N='Assert-FleetMergeReadiness-SelfTest'; S=$assertMr; E=@('-SelfTest') }
   @{ N='Test-FleetReviewIntegrity'; S=(Join-Path $PSScriptRoot 'Test-FleetReviewIntegrity.ps1'); E=@() }
+  @{ N='Test-FleetReviewCertification'; S=(Join-Path $PSScriptRoot 'Test-FleetReviewCertification.ps1'); E=@() }
 )
 
 try {
@@ -255,6 +258,84 @@ try {
     if ((Get-VerdictToken $r1.Raw 'merge') -ne 'NOT_READY') { throw ("want NOT_READY: {0}" -f $r1.Raw) }
     $mutOk++; Write-Output 'mutation-D PASS: merge READY -> NOT_READY on packet-sha mismatch'
   } catch { $failed = $true; Write-Output ("mutation-D FAIL: {0}" -f $_.Exception.Message) }
+
+  # E: pool lease lifecycle docs — run-owned removal + pool-owned exception; mutation fails
+  try {
+    $skillPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'SKILL.md'
+    $poolRefPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'references\worktree-pool.md'
+    if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { throw 'SKILL.md missing' }
+    if (-not (Test-Path -LiteralPath $poolRefPath -PathType Leaf)) { throw 'references/worktree-pool.md missing' }
+    $skillBody = [IO.File]::ReadAllText($skillPath, $utf8)
+    $poolRefBody = [IO.File]::ReadAllText($poolRefPath, $utf8)
+    $runOwnedPhrases = @(
+      'Run-owned worktrees must be removed at run end'
+      'Remove the worktree AND its directory at run end'
+    )
+    $poolExPhrases = @(
+      'Pool-owned slots must remain registered'
+      'Presence of a pool-owned slot is not incomplete'
+    )
+    function Test-FleetPoolLeaseDocs {
+      param([string]$SkillText, [string]$RefText)
+      $combo = $SkillText + "`n" + $RefText
+      $hasRun = $false
+      foreach ($phrase in $runOwnedPhrases) {
+        if ($combo.Contains($phrase)) { $hasRun = $true; break }
+      }
+      $hasPool = $true
+      foreach ($phrase in $poolExPhrases) {
+        if (-not $combo.Contains($phrase)) { $hasPool = $false; break }
+      }
+      return ($hasRun -and $hasPool)
+    }
+    if (-not (Test-FleetPoolLeaseDocs -SkillText $skillBody -RefText $poolRefBody)) {
+      throw 'baseline SKILL/worktree-pool missing run-owned removal or pool-owned exception'
+    }
+    # Negative control: drop pool-owned exception wording → must fail
+    $mutPoolDrop = $poolRefBody
+    foreach ($phrase in $poolExPhrases) {
+      $mutPoolDrop = $mutPoolDrop.Replace($phrase, 'POOL-EXCEPTION-REMOVED')
+    }
+    $mutSkillDrop = $skillBody
+    foreach ($phrase in $poolExPhrases) {
+      $mutSkillDrop = $mutSkillDrop.Replace($phrase, 'POOL-EXCEPTION-REMOVED')
+    }
+    if (Test-FleetPoolLeaseDocs -SkillText $mutSkillDrop -RefText $mutPoolDrop) {
+      throw 'negative control: missing pool exception should fail'
+    }
+    # Negative control: drop run-owned removal wording → must fail
+    $mutRunDropSkill = $skillBody
+    $mutRunDropRef = $poolRefBody
+    foreach ($phrase in $runOwnedPhrases) {
+      $mutRunDropSkill = $mutRunDropSkill.Replace($phrase, 'RUN-OWNED-REMOVED')
+      $mutRunDropRef = $mutRunDropRef.Replace($phrase, 'RUN-OWNED-REMOVED')
+    }
+    if (Test-FleetPoolLeaseDocs -SkillText $mutRunDropSkill -RefText $mutRunDropRef) {
+      throw 'negative control: missing run-owned removal should fail'
+    }
+    $mutOk++; Write-Output 'mutation-E PASS: pool lease docs present; mutated texts fail'
+  } catch { $failed = $true; Write-Output ("mutation-E FAIL: {0}" -f $_.Exception.Message) }
+
+  # F: certification gate on contract surface + SKILL mandate present; negative control drops mandate
+  try {
+    if (-not (Test-Path -LiteralPath $assertCert -PathType Leaf)) { throw 'Assert-FleetReviewCertification.ps1 missing' }
+    $skillPath = Join-Path (Split-Path -Parent $PSScriptRoot) 'SKILL.md'
+    $claudeSkill = Join-Path (Split-Path -Parent $PSScriptRoot) 'adapters\claude\SKILL.md'
+    if (-not (Test-Path -LiteralPath $skillPath -PathType Leaf)) { throw 'SKILL.md missing' }
+    if (-not (Test-Path -LiteralPath $claudeSkill -PathType Leaf)) { throw 'adapters/claude/SKILL.md missing' }
+    $skillBody = [IO.File]::ReadAllText($skillPath, $utf8)
+    $claudeBody = [IO.File]::ReadAllText($claudeSkill, $utf8)
+    $mandate = 'Assert-FleetReviewCertification.ps1'
+    $phrase = 'Unless the last line says `certification: CERTIFIED`'
+    if (-not $skillBody.Contains($mandate)) { throw 'SKILL.md missing certification gate name' }
+    if (-not $skillBody.Contains($phrase)) { throw 'SKILL.md missing CERTIFIED mandate phrase' }
+    if (-not $claudeBody.Contains($mandate)) { throw 'claude SKILL.md missing certification gate name' }
+    if (-not $claudeBody.Contains($phrase)) { throw 'claude SKILL.md missing CERTIFIED mandate phrase' }
+    $mutDrop = $skillBody.Replace($mandate, 'CERT-GATE-REMOVED').Replace($phrase, 'CERT-PHRASE-REMOVED')
+    if ($mutDrop.Contains($mandate) -or $mutDrop.Contains($phrase)) { throw 'negative control replace failed' }
+    if ($mutDrop.Contains('Assert-FleetReviewCertification.ps1')) { throw 'negative control still has gate' }
+    $mutOk++; Write-Output 'mutation-F PASS: certification gate + dual SKILL mandate; mutated text fails'
+  } catch { $failed = $true; Write-Output ("mutation-F FAIL: {0}" -f $_.Exception.Message) }
 }
 catch { $failed = $true; Write-Output ("harness FAIL: {0}" -f $_.Exception.Message) }
 finally {

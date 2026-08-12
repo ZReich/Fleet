@@ -70,11 +70,13 @@ function Quote-GitArg([string]$Value) {
 }
 
 function Get-ShippedDiffBytes {
+  # Committed range only: raw bytes of `git diff <base>..HEAD` (never working tree).
+  # Coverage binds to this range vs frozen packet final.diff (SHA-256 equality).
   param([string]$RepoPath, [string]$Base, [string[]]$Paths)
   $parts = New-Object System.Collections.ArrayList
   [void]$parts.Add('-C'); [void]$parts.Add((Quote-GitArg $RepoPath))
   [void]$parts.Add('--no-pager'); [void]$parts.Add('diff')
-  [void]$parts.Add((Quote-GitArg $Base)); [void]$parts.Add('HEAD')
+  [void]$parts.Add((Quote-GitArg ($Base + '..HEAD')))
   if ($Paths -and @($Paths).Count -gt 0) {
     [void]$parts.Add('--')
     foreach ($p in @($Paths)) { [void]$parts.Add((Quote-GitArg $p)) }
@@ -194,6 +196,7 @@ $callerProfile = $PSBoundParameters.ContainsKey('ReviewProfile')
 $hasLockedPlan = -not [string]::IsNullOrWhiteSpace($LockedPlan)
 if (-not $callerTier) { $Tier = 'STANDARD' }
 if (-not $callerProfile) { $ReviewProfile = 'general' }
+if ($PathFilter -and @($PathFilter).Count -gt 0) { Emit-Fail 'PathFilter is not supported for committed certification coverage' $Tier $required $ReviewProfile }
 $resolvedRepo = (Resolve-Path -LiteralPath $Repo).Path
 if ([string]::IsNullOrWhiteSpace($ReviewDir)) { $ReviewDir = Join-Path $resolvedRepo '.fleet-review' }
 $shippedBytes = Get-ShippedDiffBytes -RepoPath $resolvedRepo -Base $BaseRef -Paths $PathFilter

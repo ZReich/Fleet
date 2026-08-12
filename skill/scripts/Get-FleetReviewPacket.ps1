@@ -8,6 +8,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $utf8 = [Text.UTF8Encoding]::new($false)
+. (Join-Path $PSScriptRoot 'FleetReviewPacketReady.Helpers.ps1')
 
 $requiredNames = @(
   "base.sha",
@@ -44,157 +45,7 @@ function Get-ArtifactHashEntry {
   }
 }
 
-function Assert-TestResultsJson {
-  param($Value, [string]$Label)
-  if ($null -eq $Value) { throw "Frozen review packet is incomplete: $Label is not valid JSON" }
-  $names = @($Value.PSObject.Properties.Name)
-  if ("schema_version" -notin $names -or "status" -notin $names -or "commands" -notin $names) {
-    throw "Frozen review packet is incomplete: $Label missing required fields"
-  }
-  if ([string]$Value.schema_version -ne "1") {
-    throw "Frozen review packet is incomplete: $Label schema_version must be 1"
-  }
-  if ([string]$Value.status -notin @("passed", "failed")) {
-    throw "Frozen review packet is incomplete: $Label status must be passed|failed"
-  }
-  if ($null -eq $Value.commands -or $Value.commands -is [string] -or $Value.commands -isnot [Collections.IEnumerable]) {
-    throw "Frozen review packet is incomplete: $Label commands must be an array"
-  }
-  # A "passed" suite that ran NOTHING is the false-green this gate exists to stop
-  # (panel-found 2026-07-26: an empty commands[] sailed through a hard-risk packet).
-  if ([string]$Value.status -eq "passed" -and @($Value.commands).Count -eq 0) {
-    throw "Frozen review packet is incomplete: $Label claims status=passed with zero commands - no gate ran"
-  }
-  foreach ($command in @($Value.commands)) {
-    $cNames = @($command.PSObject.Properties.Name)
-    if ("command" -notin $cNames -or "exit_code" -notin $cNames -or "status" -notin $cNames) {
-      throw "Frozen review packet is incomplete: $Label command entry missing required fields"
-    }
-    if ([string]::IsNullOrWhiteSpace([string]$command.command)) {
-      throw "Frozen review packet is incomplete: $Label command entry has blank command"
-    }
-    $exitCode = 0
-    if (-not [int]::TryParse([string]$command.exit_code, [ref]$exitCode)) {
-      throw "Frozen review packet is incomplete: $Label command entry has non-integer exit_code"
-    }
-    if ([string]$command.status -notin @("passed", "failed")) {
-      throw "Frozen review packet is incomplete: $Label command entry status must be passed|failed"
-    }
-    # Top-level "passed" must be consistent with the commands beneath it: a suite cannot
-    # pass while one of its gates failed or exited nonzero.
-    if ([string]$Value.status -eq "passed" -and ([string]$command.status -ne "passed" -or $exitCode -ne 0)) {
-      throw "Frozen review packet is incomplete: $Label claims status=passed but command '$([string]$command.command)' reports status=$([string]$command.status) exit_code=$exitCode"
-    }
-    # EVIDENCE INTEGRITY (2026-07-26): a passing gate must state WHAT IT ACTUALLY
-    # EXERCISED. Recurring failure class on this codebase: green signals produced by a
-    # path that never ran the real thing - a suite that collected 0 tests, CI that
-    # skipped the frontend suite, an acceptance run that printed 100% coverage from 3 of
-    # 8 documents. A pass with no denominator, or a zero denominator, is NOT a pass.
-    if ([string]$command.status -eq "passed") {
-      $sample = [string]$command.sample
-      if ("sample" -notin $cNames -or [string]::IsNullOrWhiteSpace($sample)) {
-        throw "Frozen review packet is incomplete: $Label passed command entry needs a nonempty sample (what it exercised, e.g. '274 tests', '8/8 documents')"
-      }
-      # Denominator required: digit-free prose ("all tests green") is a false green.
-      $numbers = [regex]::Matches($sample, '\d+(?:\.\d+)?')
-      if ($numbers.Count -eq 0) {
-        throw "Frozen review packet is incomplete: $Label passed command entry sample must include a count of what ran (e.g. '274 tests', '8/8 documents'); got '$sample'"
-      }
-      $allZero = $true
-      foreach ($n in $numbers) { if ([double]$n.Value -ne 0) { $allZero = $false; break } }
-      if ($allZero) {
-        throw "Frozen review packet is incomplete: $Label passed command entry has a zero sample ('$sample') - a gate that exercised nothing is not a pass"
-      }
-    }
-  }
-}
 
-# Fallow evidence: exactly three shapes — native audit, legacy fleet, or not_measured.
-# Native: fallow audit --format json (kind=audit, verdict, summary with integer counters).
-# Legacy: findings[] + summary.new_findings (packets already written that way).
-# not_measured: explicit skip + reason; no findings counter. Junk JSON is green-without-exercise.
-function Assert-FallowResultsJson {
-  param($Value, [string]$Label)
-  if ($null -eq $Value) { throw "Frozen review packet is incomplete: $Label is not valid JSON" }
-  $names = @($Value.PSObject.Properties.Name)
-
-  # Shape 3: explicit not_measured (PowerShell-only repos, Fallow never ran).
-  if ("status" -in $names -and [string]$Value.status -eq "not_measured") {
-    $reason = if ("reason" -in $names) { [string]$Value.reason } else { "" }
-    if ([string]::IsNullOrWhiteSpace($reason)) {
-      throw "Frozen review packet is incomplete: $Label status=not_measured requires a nonempty reason"
-    }
-    $hasFindings = $false
-    if ("new_findings" -in $names -and $null -ne $Value.new_findings) { $hasFindings = $true }
-    if (-not $hasFindings -and "summary" -in $names -and $null -ne $Value.summary) {
-      $sNames = @($Value.summary.PSObject.Properties.Name)
-      if ("new_findings" -in $sNames -and $null -ne $Value.summary.new_findings) { $hasFindings = $true }
-    }
-    if ($hasFindings) {
-      throw "Frozen review packet is incomplete: $Label status=not_measured cannot report new_findings (absent or null only; 0 is a false clean signal)"
-    }
-    return
-  }
-
-  # Shape 1: native Fallow audit (kind=audit + verdict + summary integer counters).
-  if ("kind" -in $names -and [string]$Value.kind -eq "audit") {
-    if ("verdict" -notin $names -or [string]::IsNullOrWhiteSpace([string]$Value.verdict)) {
-      throw "Frozen review packet is incomplete: $Label kind=audit requires a verdict"
-    }
-    if ("summary" -notin $names -or $null -eq $Value.summary) {
-      throw "Frozen review packet is incomplete: $Label kind=audit requires a summary object"
-    }
-    $counterTotal = 0
-    $counterCount = 0
-    foreach ($p in @($Value.summary.PSObject.Properties)) {
-      $n = 0
-      if ($null -ne $p.Value -and [int]::TryParse([string]$p.Value, [ref]$n) -and $n -ge 0) {
-        $counterCount++
-        $counterTotal += $n
-      }
-    }
-    if ($counterCount -eq 0) {
-      throw "Frozen review packet is incomplete: $Label kind=audit summary must include at least one integer issue counter"
-    }
-    $verdict = [string]$Value.verdict
-    if ($verdict -eq "pass" -and $counterTotal -gt 0) {
-      throw "Frozen review packet is incomplete: $Label verdict=pass contradicts nonzero issue counters ($counterTotal)"
-    }
-    if ($verdict -eq "fail" -and $counterTotal -eq 0) {
-      throw "Frozen review packet is incomplete: $Label verdict=fail contradicts zero issue counters"
-    }
-    return
-  }
-
-  # Shape 2: legacy fleet measured (status passed|failed + findings[] + summary.new_findings).
-  if ("status" -notin $names) {
-    throw "Frozen review packet is incomplete: $Label unrecognised shape (need kind=audit, legacy status+findings, or status=not_measured)"
-  }
-  $status = [string]$Value.status
-  if ($status -notin @("passed", "failed")) {
-    throw "Frozen review packet is incomplete: $Label status must be passed|failed|not_measured (or use native kind=audit)"
-  }
-  if ("findings" -notin $names -or $null -eq $Value.findings -or $Value.findings -is [string] -or $Value.findings -isnot [Collections.IEnumerable]) {
-    throw "Frozen review packet is incomplete: $Label measured status requires findings array"
-  }
-  if ("summary" -notin $names -or $null -eq $Value.summary) {
-    throw "Frozen review packet is incomplete: $Label measured status requires summary.new_findings (integer under summary, not top-level)"
-  }
-  $sNames = @($Value.summary.PSObject.Properties.Name)
-  if ("new_findings" -notin $sNames -or $null -eq $Value.summary.new_findings) {
-    throw "Frozen review packet is incomplete: $Label measured status requires summary.new_findings as a non-negative integer"
-  }
-  $newFindings = 0
-  if (-not [int]::TryParse([string]$Value.summary.new_findings, [ref]$newFindings) -or $newFindings -lt 0) {
-    throw "Frozen review packet is incomplete: $Label summary.new_findings must be a non-negative integer"
-  }
-  if ($status -eq "passed" -and $newFindings -gt 0) {
-    throw "Frozen review packet is incomplete: $Label status=passed contradicts summary.new_findings=$newFindings"
-  }
-  if ($status -eq "failed" -and $newFindings -eq 0) {
-    throw "Frozen review packet is incomplete: $Label status=failed contradicts summary.new_findings=0"
-  }
-}
 
 # PACKET SCOPE (panel-found 2026-07-26): plan claims must appear in touched-files.
 function Assert-PlanScopeCovered {
@@ -222,6 +73,36 @@ function Assert-PlanScopeCovered {
   }
 }
 
+function Get-FrozenTouchedFiles {
+  param([string]$RepoPath, [string]$TouchedPath)
+  $backslash = [string][char]92
+  $seen = @{}
+  $entries = New-Object System.Collections.ArrayList
+  foreach ($line in @([IO.File]::ReadAllText($TouchedPath) -split '\r?\n')) {
+    $parts = @($line.Trim() -split "`t")
+    if ($parts.Count -eq 0 -or [string]::IsNullOrWhiteSpace([string]$parts[0])) { continue }
+    $paths = if ($parts.Count -ge 2 -and $parts[0] -match '^[A-Z]\d*$') {
+      if ($parts.Count -ge 3) { @($parts[1], $parts[2]) } else { @($parts[1]) }
+    } else { @($parts[0]) }
+    foreach ($raw in $paths) {
+      $relative = ([string]$raw).Replace($backslash, '/').Trim().Trim('/')
+      if ([string]::IsNullOrWhiteSpace($relative) -or $relative -match '(^|/)\.\.(/|$)' -or [IO.Path]::IsPathRooted($relative)) {
+        throw "Frozen review packet has unsafe touched-file path: $raw"
+      }
+      $key = $relative.ToLowerInvariant(); if ($seen.ContainsKey($key)) { continue }; $seen[$key] = $true
+      $full = [IO.Path]::GetFullPath((Join-Path $RepoPath ($relative.Replace('/', $backslash))))
+      if (-not (($full + $backslash).StartsWith($RepoPath.TrimEnd($backslash) + $backslash, [StringComparison]::OrdinalIgnoreCase))) {
+        throw "Frozen review packet touched-file escapes repository: $raw"
+      }
+      $exists = Test-Path -LiteralPath $full -PathType Leaf
+      $hash = if ($exists) { (Get-FileHash -LiteralPath $full -Algorithm SHA256).Hash.ToLowerInvariant() } else { '' }
+      [void]$entries.Add([ordered]@{ path = $relative; exists = [bool]$exists; sha256 = $hash })
+    }
+  }
+  if ($entries.Count -eq 0) { throw 'Frozen review packet touched-files.txt contains no file paths to anchor' }
+  return @($entries)
+}
+
 $artifacts = @()
 foreach ($name in $requiredNames) {
   $path = Join-Path $resolvedPacketDir $name
@@ -241,9 +122,102 @@ foreach ($name in $requiredNames) {
 }
 
 Assert-PlanScopeCovered -PlanPath (Join-Path $resolvedPacketDir 'locked-plan.md') -TouchedPath (Join-Path $resolvedPacketDir 'touched-files.txt')
+Assert-FleetSingleReviewProfile (Join-Path $resolvedPacketDir 'locked-plan.md')
+
+$previousEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+try { $repoPath = @(& git -C $resolvedPacketDir rev-parse --show-toplevel 2>$null) }
+finally { $ErrorActionPreference = $previousEap }
+if ($LASTEXITCODE -ne 0 -or $repoPath.Count -lt 1) {
+  throw "Frozen review packet directory is not inside a Git repository: $resolvedPacketDir"
+}
+$repoPath = [IO.Path]::GetFullPath([string]$repoPath[0]).TrimEnd('\\')
+$frozenTouchedFiles = Get-FrozenTouchedFiles -RepoPath $repoPath -TouchedPath (Join-Path $resolvedPacketDir 'touched-files.txt')
+
+# T2: selected-voice preflight binding. Packet freeze requires READY evidence that
+# matches selected-voices.json run_id. Both files are hashed into the manifest.
+$preflightNames = @("selected-voices.json", "review-preflight.json")
+$selectedVoicesObj = $null
+$reviewPreflightObj = $null
+foreach ($name in $preflightNames) {
+  $path = Join-Path $resolvedPacketDir $name
+  if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+    throw "Frozen review packet is incomplete: missing required artifact '$name' in $resolvedPacketDir"
+  }
+  $item = Get-Item -LiteralPath $path
+  if ($item.Length -eq 0) {
+    throw "Frozen review packet is incomplete: required artifact '$name' is empty"
+  }
+  $artifactText = [IO.File]::ReadAllText($item.FullName)
+  if ([string]::IsNullOrWhiteSpace($artifactText)) {
+    throw "Frozen review packet is incomplete: required artifact '$name' is empty"
+  }
+  try { $parsed = $artifactText | ConvertFrom-Json -ErrorAction Stop }
+  catch { throw "Frozen review packet is incomplete: $name is not valid JSON" }
+  if ($name -eq "selected-voices.json") {
+    if ([string]$parsed.schema_version -ne "1") {
+      throw "Frozen review packet is incomplete: selected-voices.json schema_version must be 1"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$parsed.run_id)) {
+      throw "Frozen review packet is incomplete: selected-voices.json run_id is required"
+    }
+    $sel = @($parsed.selected)
+    if ($sel.Count -eq 0) {
+      throw "Frozen review packet is incomplete: selected-voices.json selected[] is empty"
+    }
+    foreach ($row in $sel) {
+      if ([string]::IsNullOrWhiteSpace([string]$row.lane_id) -or [string]::IsNullOrWhiteSpace([string]$row.voice)) {
+        throw "Frozen review packet is incomplete: selected-voices.json selected[] row missing lane_id/voice"
+      }
+    }
+    $selectedVoicesObj = $parsed
+  }
+  else {
+    if ([string]$parsed.schema_version -ne "1") {
+      throw "Frozen review packet is incomplete: review-preflight.json schema_version must be 1"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$parsed.run_id)) {
+      throw "Frozen review packet is incomplete: review-preflight.json run_id is required"
+    }
+    $st = [string]$parsed.status
+    $line = if ($parsed.PSObject.Properties['status_line']) { [string]$parsed.status_line } else { "" }
+    # Canonical status line EXACTLY (Sol D2): a loose prefix match let a hand-typed variant
+    # through in fleet-rescomp r3 and cost a full packet rebuild round.
+    if ($st -ne "READY" -or -not (Test-FleetPreflightStatusLineCanonical $line)) {
+      throw "Frozen review packet is incomplete: review-preflight.json is not READY with the canonical status_line 'review-preflight: READY | selected: N | passed: P | cached: C | failed: 0' (status='$st', status_line='$line')"
+    }
+    $failedN = 0
+    if ($parsed.PSObject.Properties['failed']) { [void][int]::TryParse([string]$parsed.failed, [ref]$failedN) }
+    if ($failedN -gt 0) {
+      throw "Frozen review packet is incomplete: review-preflight.json claims READY but failed=$failedN"
+    }
+    # Semantic counters, not just the text line (Terra H2 2026-08-11): a hand-written READY
+    # artifact with hollow numbers must not freeze.
+    $selN = -1; $pasN = -1; $cacN = -1
+    if (-not $parsed.PSObject.Properties['selected'] -or -not [int]::TryParse([string]$parsed.selected, [ref]$selN) -or $selN -lt 1) {
+      throw "Frozen review packet is incomplete: review-preflight.json selected must be an integer >= 1"
+    }
+    if (-not $parsed.PSObject.Properties['passed'] -or -not [int]::TryParse([string]$parsed.passed, [ref]$pasN) -or $pasN -lt 0) {
+      throw "Frozen review packet is incomplete: review-preflight.json passed must be a non-negative integer"
+    }
+    if (-not $parsed.PSObject.Properties['cached'] -or -not [int]::TryParse([string]$parsed.cached, [ref]$cacN) -or $cacN -lt 0) {
+      throw "Frozen review packet is incomplete: review-preflight.json cached must be a non-negative integer"
+    }
+    if (($pasN + $cacN) -lt $selN) {
+      throw "Frozen review packet is incomplete: review-preflight.json READY but passed+cached ($pasN+$cacN) < selected ($selN)"
+    }
+    if ($line -cne ("review-preflight: READY | selected: $selN | passed: $pasN | cached: $cacN | failed: 0")) {
+      throw "Frozen review packet is incomplete: review-preflight.json status_line disagrees with its own counters"
+    }
+    $reviewPreflightObj = $parsed
+  }
+  $artifacts += Get-ArtifactHashEntry -Name $name -FullPath $item.FullName -ArtifactText $artifactText
+}
+if (-not [string]::Equals([string]$selectedVoicesObj.run_id, [string]$reviewPreflightObj.run_id, [StringComparison]::Ordinal)) {
+  throw ("Frozen review packet is incomplete: run_id mismatch selected-voices='" + [string]$selectedVoicesObj.run_id + "' preflight='" + [string]$reviewPreflightObj.run_id + "'")
+}
 
 # Optional context + machine gate artifacts in stable order (D4):
-# six required, caller-context.md, test-results.json, fallow-results.json.
+# six required, preflight pair, caller-context.md, test-results.json, fallow-results.json.
 # mechanical: optional if present must be nonempty valid JSON (for JSON files) and hashed.
 # behavior|hard: test-results.json and fallow-results.json required.
 $optionalNames = @("caller-context.md", "test-results.json", "fallow-results.json")
@@ -275,6 +249,17 @@ foreach ($name in $optionalNames) {
         throw "Frozen review packet is incomplete: test-results.json is not valid JSON"
       }
       Assert-TestResultsJson -Value $parsed -Label "test-results.json"
+      Assert-FleetRedEvidence -TestResults $parsed -PacketDir $resolvedPacketDir -ReviewRisk $ReviewRisk
+      # RED evidence files are normal hashed packet artifacts (Sol D2/H3 2026-08-11): mutating
+      # or deleting one after freeze breaks the manifest like any other artifact.
+      if ($parsed.PSObject.Properties['red_controls'] -and $null -ne $parsed.red_controls) {
+        foreach ($ctl in @($parsed.red_controls)) {
+          $redRel = ([string]$ctl.evidence_path).Replace('\', '/').Trim('/')
+          $redFull = Join-Path $resolvedPacketDir ($redRel.Replace('/', '\'))
+          $redText = [IO.File]::ReadAllText((Get-Item -LiteralPath $redFull).FullName)
+          $artifacts += Get-ArtifactHashEntry -Name ('red:' + $redRel) -FullPath ([IO.Path]::GetFullPath($redFull)) -ArtifactText $redText
+        }
+      }
     }
     else {
       try {
@@ -301,7 +286,7 @@ if ($baseSha -notmatch '^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$') {
 }
 
 # review_risk participates in packet_sha256 (D4).
-$packetMaterial = "review_risk|$ReviewRisk`n" + (($artifacts | ForEach-Object { "$($_.name)|$($_.bytes)|$($_.sha256)" }) -join "`n")
+$packetMaterial = "review_risk|$ReviewRisk`n" + (($artifacts | ForEach-Object { "$($_.name)|$($_.bytes)|$($_.sha256)" }) -join "`n") + "`nfrozen_touched_files`n" + (($frozenTouchedFiles | ForEach-Object { "$($_.path)|$($_.exists)|$($_.sha256)" }) -join "`n")
 $sha256 = [Security.Cryptography.SHA256]::Create()
 try {
 $packetHash = -join ($sha256.ComputeHash($utf8.GetBytes($packetMaterial)) | ForEach-Object { $_.ToString("x2") })
@@ -316,6 +301,7 @@ $result = [ordered]@{
   packet_dir = $resolvedPacketDir
   artifact_paths = @($artifacts | ForEach-Object { $_.path })
   artifacts = @($artifacts)
+  frozen_touched_files = @($frozenTouchedFiles)
   packet_sha256 = $packetHash
 }
 $json = $result | ConvertTo-Json -Depth 5 -Compress

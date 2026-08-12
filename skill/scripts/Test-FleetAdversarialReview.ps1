@@ -97,6 +97,11 @@ try {
     $obj = $ok.Raw | ConvertFrom-Json
     Assert-True ($ok.ExitCode -eq 0 -and $obj.tier -eq 'STANDARD' -and $obj.voices -eq 3 -and $obj.packet -eq 'match') "json: $($ok.Raw)"
   }
+  Case 'PathFilter is rejected for committed coverage' {
+    $s = New-Ship 'path-filter' 'pf.txt'; Finish-Ship $s $md3 -Names $n3 | Out-Null
+    $blocked = Invoke-Gate -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -Tier 'STANDARD' -RunId $s.Lease.RunId -ReceiptDir $s.ReceiptDir -PacketManifest (Join-Path $s.ReviewDir 'packet-manifest.json') -PathFilter @('pf.txt')
+    Assert-True ($blocked.ExitCode -ne 0 -and $blocked.Raw -match 'PathFilter is not supported') "path-filter: $($blocked.Raw)"
+  }
   Case 'NEGATIVE: incident manifest {} + three x files -> FAILED' {
     $s = New-Ship 'incident-x' 'i.txt'
     $paths = Write-ReviewPacket -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -VoiceBodies @('x','x','x') -ManifestBody '{}' -VoiceNames $n3
@@ -289,6 +294,51 @@ try {
     [IO.File]::WriteAllText($lp, "# locked plan mutated`nreview_profile: security-sensitive`nextra: 1`n", $utf8)
     $run = Invoke-Gate -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -Tier 'FULL' -ReviewProfile 'security-sensitive' -LockedPlan $lp -RunId $s.Lease.RunId -ReceiptDir $s.ReceiptDir -PacketManifest (Join-Path $s.ReviewDir 'packet-manifest.json')
     Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'locked_plan_sha256|verdict: FAILED') "lp-hash: $($run.Raw)"
+  }
+  Case 'POSITIVE: committed branch range binds frozen final.diff -> exit 0' {
+    $s = New-Ship 'committed-bind' 'cb.txt' "committed-body`n"; Finish-Ship $s $md3 -Names $n3 | Out-Null
+    $run = Ig $s.Repo $s.Base $s.ReviewDir 'STANDARD' $s.Lease.RunId $s.ReceiptDir
+    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'packet: match' -and $run.Raw -match 'verdict: ok') "cbind: $($run.Raw)"
+  }
+  Case 'NEGATIVE: base==HEAD empty committed range -> FAILED' {
+    $repo = New-Repo 'base-eq-head'; $base = (& git -C $repo rev-parse HEAD).Trim(); $lease = New-TestLease
+    $rc = Join-Path $repo '.fleet-receipts'; New-Item -ItemType Directory -Force -Path $rc | Out-Null
+    $man = Join-Path $repo 'pm.json'; [IO.File]::WriteAllText($man, (EmptyManJson), $utf8)
+    $run = Invoke-Gate -Repo $repo -BaseRef $base -Tier 'STANDARD' -RunId $lease.RunId -ReceiptDir $rc -PacketManifest $man -OmitLockedPlan
+    Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'empty shipped diff|BaseRef resolves to HEAD|zero-telemetry|verdict: FAILED') "beqh: $($run.Raw)"
+  }
+  Case 'NEGATIVE: packet from uncommitted-only changes -> MISMATCH' {
+    $s = New-Ship 'unc-only' 'uo.txt' "committed`n"; Finish-Ship $s $md3 -Names $n3 | Out-Null
+    $tracked = Join-Path $s.Repo 'uo.txt'
+    [IO.File]::WriteAllText($tracked, "committed`nplus-uncommitted`n", $utf8)
+    $fd = Join-Path $s.ReviewDir 'final.diff'
+    $p = New-Object System.Diagnostics.Process; $psi = $p.StartInfo
+    $psi.FileName = 'git'; $psi.Arguments = ('-C "' + $s.Repo.Replace('"', '\"') + '" --no-pager diff ' + $s.Base)
+    $psi.UseShellExecute = $false; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true; $psi.CreateNoWindow = $true
+    [void]$p.Start(); $ms = New-Object System.IO.MemoryStream
+    try { $p.StandardOutput.BaseStream.CopyTo($ms); [void]$p.WaitForExit(); [IO.File]::WriteAllBytes($fd, $ms.ToArray()) } finally { $ms.Dispose(); $p.Dispose() }
+    $run = Ig $s.Repo $s.Base $s.ReviewDir 'STANDARD' $s.Lease.RunId $s.ReceiptDir
+    Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'packet: MISMATCH|predate') "unc: $($run.Raw)"
+  }
+  Case 'NEGATIVE: wrong base ref -> MISMATCH' {
+    $repo = New-Repo 'wrong-base'; $base0 = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Commit $repo 'a.txt' "one`n" 'first'; $base1 = (& git -C $repo rev-parse HEAD).Trim()
+    Add-Commit $repo 'b.txt' "two`n" 'second'
+    $rd = Join-Path $repo '.fleet-review'; $rc = Join-Path $repo '.fleet-receipts'
+    Write-LockedPlan -Path (Join-Path $repo 'locked-plan.md') -Profile 'general'; $lease = New-TestLease
+    $paths = Write-ReviewPacket -Repo $repo -BaseRef $base1 -ReviewDir $rd -VoiceBodies $md3 -VoiceNames $n3
+    Write-ReceiptsForVoices -ReceiptDir $rc -Lease $lease -VoicePaths $paths -Profile 'general' -Tier 'STANDARD'
+    $run = Ig $repo $base0 $rd 'STANDARD' $lease.RunId $rc
+    Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'packet: MISMATCH|predate') "wbase: $($run.Raw)"
+  }
+  Case 'NEGATIVE: single-byte mutation of frozen final.diff -> MISMATCH' {
+    $s = New-Ship 'mut-diff' 'md.txt' "body`n"; Finish-Ship $s $md3 -Names $n3 | Out-Null
+    $fd = Join-Path $s.ReviewDir 'final.diff'; $bytes = [IO.File]::ReadAllBytes($fd)
+    Assert-True ($bytes.Length -gt 0) 'mut-diff empty final.diff'
+    $bytes[$bytes.Length - 1] = [byte](($bytes[$bytes.Length - 1] + 1) % 256)
+    [IO.File]::WriteAllBytes($fd, $bytes)
+    $run = Ig $s.Repo $s.Base $s.ReviewDir 'STANDARD' $s.Lease.RunId $s.ReceiptDir
+    Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'packet: MISMATCH|predate') "mut: $($run.Raw)"
   }
 }
 finally { if (Test-Path -LiteralPath $root) { Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue } }

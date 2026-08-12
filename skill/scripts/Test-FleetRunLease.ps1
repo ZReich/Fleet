@@ -271,9 +271,57 @@ try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'hmac-exit'
     Assert-True (-not (Test-Path -LiteralPath $path)) 'exit left lease/key on disk'
   }
+
+  # --- L3 janitor owner-liveness reads (do not alter Enter reclaim semantics) ---
+  Case 'Test-FleetOwnerConclusivelyDead: fresh HB live; dead+stale dead; invalid PID unknown' {
+    $now = [datetimeoffset]::Now
+    $freshDead = [pscustomobject]@{ owner_pid = 999990; heartbeat_at = $now.ToString('o') }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $freshDead $now 2)) 'dead PID + fresh HB must be LIVE'
+    $staleLive = [pscustomobject]@{ owner_pid = $PID; heartbeat_at = $now.AddHours(-10).ToString('o') }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $staleLive $now 2)) 'stale HB + live PID must be LIVE'
+    $staleDead = [pscustomobject]@{ owner_pid = 999990; heartbeat_at = $now.AddHours(-10).ToString('o') }
+    Assert-True (Test-FleetOwnerConclusivelyDead $staleDead $now 2) 'dead PID + stale HB must be conclusive dead'
+    $badPid = [pscustomobject]@{ owner_pid = 'nope'; heartbeat_at = $now.AddHours(-10).ToString('o') }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $badPid $now 2)) 'invalid PID must be LIVE/unknown'
+    $zeroPid = [pscustomobject]@{ owner_pid = 0; heartbeat_at = $now.AddHours(-10).ToString('o') }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $zeroPid $now 2)) 'missing PID must be LIVE/unknown'
+    $missingHbDead = [pscustomobject]@{ owner_pid = 999990 }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $missingHbDead $now 2)) 'missing heartbeat + dead PID must be LIVE/unknown'
+    $invalidHbDead = [pscustomobject]@{ owner_pid = 999990; heartbeat_at = 'not-a-time' }
+    Assert-True (-not (Test-FleetOwnerConclusivelyDead $invalidHbDead $now 2)) 'invalid heartbeat + dead PID must be LIVE/unknown'
+    # Enter reclaim semantics unchanged: dead PID still reclaimable even with fresh HB.
+    Assert-True (Test-FleetLeaseReclaimable $freshDead $now 2) 'Enter reclaim must still treat dead PID as reclaimable'
+  }
+
+  # --- T4 janitor wiring (stdout contract + post-mutex + crash isolation) ---
+  Case 'enter still emits one lease path after janitor wire' {
+    $cap = Invoke-PsCapture $enter '-RunId janitor-wire-stdout' -CaptureErr
+    $stdoutLines = @($cap.Out -split "`r?`n" | Where-Object { $_ })
+    Assert-True ($cap.Code -eq 0) ('enter exit ' + $cap.Code + ' err=' + $cap.Err)
+    Assert-True ($stdoutLines.Count -eq 1 -and (Test-Path -LiteralPath $stdoutLines[0])) ('stdout not single lease path: ' + $cap.Out)
+    Assert-True ($cap.Err -match 'fleet-lease-order: mutex-released') ('missing mutex-released: ' + $cap.Err)
+    Assert-True ($cap.Err -match 'fleet-lease-order: janitor-begin') ('missing janitor-begin: ' + $cap.Err)
+    $mi = $cap.Err.IndexOf('fleet-lease-order: mutex-released')
+    $ji = $cap.Err.IndexOf('fleet-lease-order: janitor-begin')
+    Assert-True ($mi -ge 0 -and $ji -ge 0 -and $mi -lt $ji) 'janitor ran before mutex release'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'janitor-wire-stdout'
+  }
+
+  Case 'janitor crash does not fail lease creation' {
+    $env:FLEET_JANITOR_FORCE_FAIL = '1'
+    try {
+      $cap = Invoke-PsCapture $enter '-RunId janitor-wire-crash' -CaptureErr
+      Assert-True ($cap.Code -eq 0) ('janitor crash failed enter: ' + $cap.Err)
+      $stdoutLines = @($cap.Out -split "`r?`n" | Where-Object { $_ })
+      Assert-True ($stdoutLines.Count -eq 1 -and (Test-Path -LiteralPath $stdoutLines[0])) 'crash spoiled lease stdout'
+      Assert-True ($cap.Err -match 'janitor skipped|forced janitor failure') ('expected crash warn: ' + $cap.Err)
+    } finally { Remove-Item Env:\FLEET_JANITOR_FORCE_FAIL -ErrorAction SilentlyContinue }
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'janitor-wire-crash'
+  }
 }
 finally {
   $env:USERPROFILE = $oldProfile
+  Remove-Item Env:\FLEET_JANITOR_FORCE_FAIL -ErrorAction SilentlyContinue
   Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue
 }
 

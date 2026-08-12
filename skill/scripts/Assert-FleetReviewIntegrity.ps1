@@ -62,19 +62,36 @@ function Emit-Result([string]$Verdict,[int]$H,[int]$R,[int]$C,[string]$Message='
   }
 }
 function Test-ModelAgreement($r, $spanProp) {
-  $req = ''; $obs = ''
+  $req = ''; $obs = ''; $evidence = ''
   if ($r.PSObject.Properties['requested_model']) { $req = [string]$r.requested_model }
   if ($r.PSObject.Properties['observed_model']) { $obs = [string]$r.observed_model }
+  if ($r.PSObject.Properties['model_evidence']) { $evidence = [string]$r.model_evidence }
   if ([string]::IsNullOrWhiteSpace($req) -or [string]::IsNullOrWhiteSpace($obs)) { return 'model blank' }
-  $rk = Get-VoiceModelKey $req; $ok = Get-VoiceModelKey $obs
-  if ($rk -ne $ok) { return "model disagree req=$req obs=$obs" }
+  $rk = Get-VoiceModelKey $req
+  # EXACT allowlist (Terra M3 2026-08-11): unknown evidence values fail closed. Old names kept
+  # for already-signed archived receipts; new receipts use the Sol-locked canonical values.
+  $unobservableSet = @(
+    'requested-pinned:codex-cli-config', 'requested-pinned:pi-provider-model', 'requested-pinned:kimi-cli-config',
+    'cli-pinned-unobserved', 'requested-envelope', 'requested-cli-argument+isolated-config')
+  $observableSet = @(
+    'observed-provider:grok-unified-log', 'observed-envelope:claude-modelUsage',
+    'unified-log', 'modelUsage')
+  $unobservable = ($evidence -cin $unobservableSet)
+  if (-not $unobservable -and ($evidence -cnotin $observableSet)) { return "model evidence not allowlisted: $evidence" }
+  if ($unobservable) {
+    if ($obs -cne 'unobserved') { return "model disagree req=$req obs=$obs" }
+  } else {
+    $ok = Get-VoiceModelKey $obs
+    if ($rk -ne $ok) { return "model disagree req=$req obs=$obs" }
+  }
   if ($null -ne $spanProp) {
     $sm = ''; if ($spanProp.PSObject.Properties['gen_ai.request.model']) { $sm = [string]$spanProp.'gen_ai.request.model' }
     if ([string]::IsNullOrWhiteSpace($sm)) { return 'span request model null' }
     if ((Get-VoiceModelKey $sm) -ne $rk) { return 'span request model disagree' }
     $srm = ''; if ($spanProp.PSObject.Properties['gen_ai.response.model']) { $srm = [string]$spanProp.'gen_ai.response.model' }
-    if ([string]::IsNullOrWhiteSpace($srm)) { return 'span response model null' }
-    if ((Get-VoiceModelKey $srm) -ne $rk) { return 'span response model disagree' }
+    if ([string]::IsNullOrWhiteSpace($srm)) {
+      if (-not $unobservable) { return 'span response model null' }
+    } elseif ((Get-VoiceModelKey $srm) -ne $rk) { return 'span response model disagree' }
   }
   return $null
 }
@@ -185,7 +202,7 @@ foreach ($line in [IO.File]::ReadAllLines((Resolve-Path -LiteralPath $SpanLedger
 
 # 2-4) Parse shape + VERIFY SIGNATURE before any semantic trust. One bad receipt => whole set FAILED.
 $receipts = New-Object System.Collections.ArrayList; $byLane = @{}; $laneCounts = @{}
-foreach ($file in @(Get-ChildItem -LiteralPath $ReceiptDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Sort-Object FullName)) {
+foreach ($file in @(Get-ChildItem -LiteralPath $ReceiptDir -Filter '*.json' -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -notlike '*.result.json' } | Sort-Object FullName)) {
   if ($file.Name.StartsWith('_')) { continue }
   try { $raw = [IO.File]::ReadAllText($file.FullName, $utf8) | ConvertFrom-Json -ErrorAction Stop }
   catch { Emit-Result 'FAILED' 0 0 0 "unparseable receipt: $($file.Name)"; exit 1 }

@@ -41,7 +41,7 @@ function New-TestLease {
   $script:WrongSecret = New-Object byte[] 32; for ($i = 0; $i -lt 32; $i++) { $script:WrongSecret[$i] = [byte](255 - $i) }
 }
 function New-Receipt {
-  param([string]$LaneId,[string]$TaskId='T-sec',[string]$Model='sol',[string]$Outcome='completed',[object]$FallbackOf=$null,[string]$RefusalReason=$null,[string]$PacketSha='',[string]$CharterSha='',[string]$PlanSha='',[string]$ManifestSha='',[string]$ResultPath='',[string]$ResultSha='',[string]$Started='2026-08-05T01:00:00.0000000Z',[string]$Completed='2026-08-05T01:05:00.0000000Z',[int]$ExitCode=0,[string]$VoiceId='',[string]$Observed='',[string]$RunIdOverride='',[string]$Role='security-review')
+  param([string]$LaneId,[string]$TaskId='T-sec',[string]$Model='sol',[string]$Outcome='completed',[object]$FallbackOf=$null,[string]$RefusalReason=$null,[string]$PacketSha='',[string]$CharterSha='',[string]$PlanSha='',[string]$ManifestSha='',[string]$ResultPath='',[string]$ResultSha='',[string]$Started='2026-08-05T01:00:00.0000000Z',[string]$Completed='2026-08-05T01:05:00.0000000Z',[int]$ExitCode=0,[string]$VoiceId='',[string]$Observed='',[string]$ModelEvidence='unified-log',[string]$RunIdOverride='',[string]$Role='security-review')
   if ([string]::IsNullOrWhiteSpace($PacketSha)) { $PacketSha = $script:ShaA }
   if ([string]::IsNullOrWhiteSpace($CharterSha)) { $CharterSha = $script:ShaB }
   if ([string]::IsNullOrWhiteSpace($PlanSha)) { $PlanSha = $script:PlanSha }
@@ -51,7 +51,7 @@ function New-Receipt {
   if ([string]::IsNullOrWhiteSpace($Observed)) { $Observed = $Model }
   if ([string]::IsNullOrWhiteSpace($ResultPath)) { $ResultPath = 'missing.md' }
   $rid = $script:RunId; if (-not [string]::IsNullOrWhiteSpace($RunIdOverride)) { $rid = $RunIdOverride }
-  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='review_lane'; run_id=$rid; task_id=$TaskId; lane_id=$LaneId; voice_id=$VoiceId; review_role=$Role; requested_model=$Model; observed_model=$Observed; model_evidence='test-fixture'; emitter_id='test-emitter'; input_packet_sha256=$PacketSha; expected_lane_manifest_sha256=$ManifestSha; locked_plan_sha256=$PlanSha; review_profile='security-sensitive'; charter_path='charter.md'; review_tier='FULL'; result_path=$ResultPath; charter_sha256=$CharterSha; result_sha256=$ResultSha; exit_code=$ExitCode; outcome=$Outcome; refusal_reason=$RefusalReason; fallback_of=$FallbackOf; started_at=$Started; completed_at=$Completed; sig_alg='HMAC-SHA256'; key_id=$script:KeyId }
+  return [pscustomobject][ordered]@{ schema_version='2'; receipt_type='review_lane'; run_id=$rid; task_id=$TaskId; lane_id=$LaneId; voice_id=$VoiceId; review_role=$Role; requested_model=$Model; observed_model=$Observed; model_evidence=$ModelEvidence; emitter_id='test-emitter'; input_packet_sha256=$PacketSha; expected_lane_manifest_sha256=$ManifestSha; locked_plan_sha256=$PlanSha; review_profile='security-sensitive'; charter_path='charter.md'; review_tier='FULL'; result_path=$ResultPath; charter_sha256=$CharterSha; result_sha256=$ResultSha; exit_code=$ExitCode; outcome=$Outcome; refusal_reason=$RefusalReason; fallback_of=$FallbackOf; started_at=$Started; completed_at=$Completed; sig_alg='HMAC-SHA256'; key_id=$script:KeyId }
 }
 function Write-SignedReceipt([string]$Dir,[string]$Name,$Obj,[byte[]]$Secret=$null,[switch]$Unsigned) {
   if ($null -eq $Secret) { $Secret = $script:Secret }
@@ -65,14 +65,19 @@ function Write-SignedReceipt([string]$Dir,[string]$Name,$Obj,[byte[]]$Secret=$nu
     $v = $Obj.$k
     if ($null -eq $v) { [void]$parts.Add(('"{0}":null' -f $k)) } else { [void]$parts.Add(('"{0}":{1}' -f $k, (ConvertTo-Json -InputObject $v -Compress))) }
   }
-  Write-Utf8 (Join-Path $Dir ($Name + '.json')) ('{' + ($parts -join ',') + '}')
+  Write-Utf8 (Join-Path $Dir ($Name + '.receipt.json')) ('{' + ($parts -join ',') + '}')
 }
 function New-SpanLine([string]$Lane,[string]$Model,[string]$Status,[string]$ErrType=$null,[string]$ResponseModel='') {
   $err = if ([string]::IsNullOrEmpty($ErrType)) { 'null' } else { '"' + $ErrType + '"' }
-  $respM = $Model; if (-not [string]::IsNullOrWhiteSpace($ResponseModel)) { $respM = $ResponseModel }
+  $responseJson = ''
+  if ($ResponseModel -ceq '__null__') { $responseJson = 'null' }
+  else {
+    $respM = $Model; if (-not [string]::IsNullOrWhiteSpace($ResponseModel)) { $respM = $ResponseModel }
+    $responseJson = ConvertTo-Json -InputObject $respM -Compress
+  }
   return ('{"schema_version":"1","run_id":' + (ConvertTo-Json -InputObject $script:RunId -Compress) + ',"lane_id":' + (ConvertTo-Json -InputObject $Lane -Compress) +
     ',"phase":"review","gen_ai.operation.name":"invoke_agent","gen_ai.agent.name":"fleet","gen_ai.provider.name":"x","gen_ai.request.model":' +
-    (ConvertTo-Json -InputObject $Model -Compress) + ',"gen_ai.response.model":' + (ConvertTo-Json -InputObject $respM -Compress) +
+    (ConvertTo-Json -InputObject $Model -Compress) + ',"gen_ai.response.model":' + $responseJson +
     ',"gen_ai.usage.input_tokens":1,"gen_ai.usage.output_tokens":1,"gen_ai.usage.cache_read.input_tokens":0,"tool_calls":0,"inference_calls":1,"duration_s":1.0,"first_result_s":0.5,"status":' +
     (ConvertTo-Json -InputObject $Status -Compress) + ',"error.type":' + $err + ',"handoff":null,"artifacts":null}')
 }
@@ -101,9 +106,9 @@ function Write-Failover([string]$d,[string]$name,[string]$model,[string]$lane,[s
   if (-not [string]::IsNullOrWhiteSpace($ResultShaOverride)) { $sha = $ResultShaOverride }
   Write-SignedReceipt $d $name (New-Receipt -LaneId $lane -Model $model -Outcome 'completed' -TaskId $TaskId -FallbackOf $FallbackOf -PacketSha $PacketSha -CharterSha $CharterSha -PlanSha $PlanSha -ResultPath $r.Path -ResultSha $sha -Started $started -Completed '2026-08-05T01:10:00.0000000Z' -ExitCode $ExitCode -Observed $Observed)
 }
-function Write-HostedOk([string]$d,[string]$lane,[string]$model,[string]$name) {
+function Write-HostedOk([string]$d,[string]$lane,[string]$model,[string]$name,[string]$Observed='',[string]$ModelEvidence='unified-log') {
   $br = New-ResultFile $d $name $script:BlockBody
-  Write-SignedReceipt $d $name (New-Receipt -LaneId $lane -Model $model -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha)
+  Write-SignedReceipt $d $name (New-Receipt -LaneId $lane -Model $model -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha -Observed $Observed -ModelEvidence $ModelEvidence)
 }
 function Invoke-Gate([string]$ReceiptDir,[string]$BaseManifest='',[string]$OutputManifest='',[string]$SpanLedger='',[string]$ExpectedPacketSha256='',[string]$LockedPlan='',[switch]$OmitBase,[switch]$OmitSpan) {
   $args = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$script:AssertPath,'-ReceiptDir',$ReceiptDir,'-RunId',$script:RunId,'-Mode','text')
@@ -179,6 +184,15 @@ $cases = @(
       Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm'; S='ok'; RM='sol' })
       $br = New-ResultFile $d 'glm-ok' $script:OkBody
       Write-SignedReceipt $d 'glm' (New-Receipt -LaneId 'v-glm-security' -Model 'glm' -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha) } }
+  @{ Name='unobservable-unobserved-null-response-ok'; ExpectExit=0; ExpectVerdict='ok'; Build={ param($d)
+      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.2'; S='ok'; RM='__null__' })
+      Write-HostedOk $d 'v-glm-security' 'glm-5.2' 'glm' -Observed 'unobserved' -ModelEvidence 'cli-pinned-unobserved' } }
+  @{ Name='unobservable-wrong-observed-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
+      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.2'; S='ok'; RM='__null__' })
+      Write-HostedOk $d 'v-glm-security' 'glm-5.2' 'glm' -Observed 'sol' -ModelEvidence 'cli-pinned-unobserved' } }
+  @{ Name='observable-unobserved-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
+      Write-Prov $d @('v-grok') @((Sp-Ok 'v-grok' 'grok-4.5'))
+      Write-HostedOk $d 'v-grok' 'grok-4.5' 'grok' -Observed 'unobserved' -ModelEvidence 'unified-log' } }
   @{ Name='unsigned-receipt-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
       Write-Prov $d $base1 @((Sp-Ok 'v-sol-security' 'sol')); $br = New-ResultFile $d 'sol' $script:BlockBody
       Write-SignedReceipt $d 'sol' (New-Receipt -LaneId 'v-sol-security' -Model 'sol' -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha) -Unsigned } }
@@ -196,6 +210,12 @@ $cases = @(
       $br = New-ResultFile $d 'spoof' $script:BlockBody
       Write-SignedReceipt $d 'spoof' (New-Receipt -LaneId 'v-spoof' -Model 'sol' -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha) } }
   @{ Name='valid-signed-hosted-failover-ok'; ExpectExit=0; ExpectVerdict='ok'; Build={ param($d) Write-Prov $d $base1 @((Sp-RefusedSol),(Sp-Fb 'v-glm-security-fb' 'glm')); Write-RefusedSol $d; Write-Failover $d 'glm' 'glm' 'v-glm-security-fb' $script:OkBody $t6 } }
+  # Failover-helper coverage: dual open-weights present; one real completion proves coverage.
+  @{ Name='failover-helper-dual-one-ok'; ExpectExit=0; ExpectVerdict='ok'; Build={ param($d)
+      Write-Prov $d $base1 @((Sp-RefusedSol),(Sp-Fb 'v-kimi-security-fb' 'kimi'),(Sp-Fb 'v-glm-security-fb' 'glm'))
+      Write-RefusedSol $d
+      Write-Failover $d 'kimi' 'kimi' 'v-kimi-security-fb' $script:RefuseBody $t6
+      Write-Failover $d 'glm' 'glm' 'v-glm-security-fb' $script:OkBody $t6 } }
   @{ Name='expected-packet-mismatch-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; ExpectPacket=$script:ShaB; Build={ param($d)
       Write-Prov $d $base1 @((Sp-Ok 'v-sol-security' 'sol')); Write-HostedOk $d 'v-sol-security' 'sol' 'sol' } }
   @{ Name='expected-packet-match-ok'; ExpectExit=0; ExpectVerdict='ok'; ExpectPacket=$script:ShaA; Build={ param($d)

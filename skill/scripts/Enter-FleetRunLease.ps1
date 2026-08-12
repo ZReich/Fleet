@@ -19,6 +19,7 @@ $root = "$env:USERPROFILE\.codex\fleet\run-leases"
 
 $mutex = New-Object Threading.Mutex($false, 'FleetClaudePromotion')
 $hasMutex = $false
+$issuedPath = $null
 try {
   $hasMutex = $mutex.WaitOne(0)
   if (-not $hasMutex) { throw 'CLI promotion is active; Fleet run cannot start until it completes.' }
@@ -74,10 +75,44 @@ try {
     [IO.File]::Move($temp, $path)
   }
   finally { if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force -ErrorAction SilentlyContinue } }
+  $issuedPath = $path
   # Path only — secret must never appear on stdout (exactly one line for callers).
   Write-Output $path
 }
 finally {
-  if ($hasMutex) { try { $mutex.ReleaseMutex() } catch { } }
+  if ($hasMutex) {
+    try { $mutex.ReleaseMutex() } catch { }
+    [Console]::Error.WriteLine('fleet-lease-order: mutex-released')
+  }
   $mutex.Dispose()
+}
+# Janitor AFTER mutex release in a child process so exit/throw never spoils the lease.
+if ($null -ne $issuedPath) {
+  try {
+    $janitor = Join-Path $PSScriptRoot 'Invoke-FleetWorktreeJanitor.ps1'
+    if (Test-Path -LiteralPath $janitor -PathType Leaf) {
+      $jReport = Join-Path ([IO.Path]::GetTempPath()) ('fleet-janitor-enter-' + [guid]::NewGuid().ToString('n') + '.json')
+      $jOut = [IO.Path]::GetTempFileName(); $jErr = [IO.Path]::GetTempFileName()
+      try {
+        $jArg = '-NoProfile -ExecutionPolicy Bypass -File "' + $janitor + '" -Mode Apply -MinAgeHours 72 -ReportPath "' + $jReport + '"'
+        $jp = Start-Process -FilePath 'powershell.exe' -PassThru -NoNewWindow -ArgumentList $jArg `
+          -RedirectStandardOutput $jOut -RedirectStandardError $jErr
+        try { $null = $jp.Handle } catch { }
+        if (-not $jp.WaitForExit(600000)) {
+          try { & taskkill.exe /PID $jp.Id /T /F 2>$null | Out-Null } catch { }
+          [Console]::Error.WriteLine('worktree janitor skipped: timeout')
+        } else {
+          foreach ($jLine in @(Get-Content -LiteralPath $jErr -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine([string]$jLine) }
+          foreach ($jLine in @(Get-Content -LiteralPath $jOut -ErrorAction SilentlyContinue)) { [Console]::Error.WriteLine([string]$jLine) }
+          if ($jp.ExitCode -ne 0) {
+            [Console]::Error.WriteLine('worktree janitor skipped: exit ' + $jp.ExitCode)
+          }
+        }
+      } finally {
+        Remove-Item -LiteralPath $jOut, $jErr -Force -ErrorAction SilentlyContinue
+      }
+    }
+  } catch {
+    [Console]::Error.WriteLine('worktree janitor skipped: ' + $_.Exception.Message)
+  }
 }

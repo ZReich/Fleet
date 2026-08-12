@@ -203,6 +203,44 @@ class FakeCodex {
       ($argvRaw -match '(?m)^exec$') -and
       (-not $argvRaw.Contains('C:\path\"quoted"'))
     )
+
+    # --- -PromptFile: file content is loaded and transported via stdin, not argv ---
+    if (Test-Path -LiteralPath $argvFile) { Remove-Item -LiteralPath $argvFile -Force }
+    $pfToken = 'PROMPTFILE_TOKEN_9d3f'
+    $pfFile = Join-Path $temp 'sol-brief.txt'
+    [IO.File]::WriteAllText($pfFile, $pfToken)
+    $pfOut = Join-Path $temp 'pf-out.txt'; $pfErr = Join-Path $temp 'pf-err.txt'
+    $pfArgs = ConvertTo-WindowsCommandLine -ArgumentTokens @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $target,
+      '-PromptFile', $pfFile, '-Mode', 'json', '-TimeoutSeconds', '30',
+      '-FirstOutputSeconds', '15', '-SkipGitRepoCheck'
+    )
+    Start-Process -FilePath 'powershell.exe' -ArgumentList $pfArgs -NoNewWindow -Wait -PassThru `
+      -RedirectStandardOutput $pfOut -RedirectStandardError $pfErr | Out-Null
+    $pfArgv = if (Test-Path -LiteralPath $argvFile) { Get-Content -Raw -LiteralPath $argvFile } else { '' }
+    # launcher ran ('-'/'exec' in argv) => prompt was non-empty => the file loaded;
+    # token absent from argv => it travelled via stdin like -Prompt does.
+    Check '-PromptFile loads file and sends content via stdin, not argv' (
+      ($pfArgv -match '(?m)^-$') -and ($pfArgv -match '(?m)^exec$') -and (-not $pfArgv.Contains($pfToken))
+    )
+
+    # --- -PromptFile pointing at a missing file fails clean, never reaches the launcher ---
+    if (Test-Path -LiteralPath $argvFile) { Remove-Item -LiteralPath $argvFile -Force }
+    $pfMissing = Join-Path $temp 'no-such-brief.txt'
+    $pfmOut = Join-Path $temp 'pfm-out.txt'; $pfmErr = Join-Path $temp 'pfm-err.txt'
+    $pfmArgs = ConvertTo-WindowsCommandLine -ArgumentTokens @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $target,
+      '-PromptFile', $pfMissing, '-Mode', 'json', '-TimeoutSeconds', '20',
+      '-FirstOutputSeconds', '15', '-SkipGitRepoCheck'
+    )
+    $pfmProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $pfmArgs -NoNewWindow -Wait -PassThru `
+      -RedirectStandardOutput $pfmOut -RedirectStandardError $pfmErr
+    $pfmText = ''
+    if (Test-Path -LiteralPath $pfmErr) { $pfmText += Get-Content -Raw -LiteralPath $pfmErr }
+    if (Test-Path -LiteralPath $pfmOut) { $pfmText += Get-Content -Raw -LiteralPath $pfmOut }
+    Check '-PromptFile missing file fails clean (never launches)' (
+      ($pfmProc.ExitCode -ne 0) -and ($pfmText -match 'PromptFile not found') -and (-not (Test-Path -LiteralPath $argvFile))
+    )
     Remove-Item Env:FAKE_CODEX_ARGV_FILE -ErrorAction SilentlyContinue
   }
 

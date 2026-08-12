@@ -167,3 +167,54 @@ and `review_profile` selection: [mode-selection.md](mode-selection.md).
 - [ ] `review-integrity:` line quoted; lane-spans use **effective** manifest
 - [ ] Pre-dispatch manifest immutable; signed `expected_lane_manifest_sha256` binds
 - [ ] `security-sensitive` → FULL + security identity (not generic seat)
+
+## Signed failover helper (`Invoke-FleetReviewFailover.ps1`)
+
+One provenance-preserving command for hosted refusal or transport failure. Informal
+file/model substitution is forbidden — every substitute is a NEW labeled lane.
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\Invoke-FleetReviewFailover.ps1 `
+  -RunId <id> -FailoverPlan <plan.json> -ReceiptDir <dir> `
+  -BaseManifest <immutable-pre-dispatch> -SpanLedger <ledger.jsonl> `
+  -OutputManifest <effective-manifest>
+```
+
+### FailoverPlan rows (only these fields)
+
+| Field | Role |
+| --- | --- |
+| `fallback_of` | parent `lane_id` (signed receipt in `-ReceiptDir`) |
+| `lane_id` | **new** child lane id (must not collide) |
+| `voice_id` | canonical voice label (kimi/glm/grok/…) |
+| `transport` | allowlisted wrapper basename (`Invoke-Grok45`, `Invoke-PiGlm`, `Invoke-KimiK3`, `Invoke-Opus48`, `Invoke-Sol`) |
+
+Array interface: multiple failed voices handled **atomically** — all plan rows validate
+before any child dispatch.
+
+### Helper order (fixed)
+
+1. Load run lease key for external `-RunId` (missing key → fail closed).
+2. Signature-verify each **parent** receipt in `-ReceiptDir` (forged/unverifiable → reject).
+3. Derive task/charter/packet/plan/profile/tier from **signed parent fields only**
+   (caller cannot supply them).
+4. Reject matrix:
+   - completed negative verdict (BLOCK / real findings) — never a failover trigger
+   - forged or wrong-key parent
+   - duplicate new `lane_id`
+   - byte-different charter (live file sha must equal signed `charter_sha256`)
+   - non-allowlisted transport
+   - missing lease key
+5. **Refusal parent** (`outcome=refused` / model refusal): plan MUST include **both**
+   kimi and glm rows for that parent. Gate still passes on **>=1** real completion from
+   `{kimi, glm, grok}` (see Owner threshold above).
+6. **Transport-failure parent** (`outcome=failed` / nonzero exit without refusal):
+   exactly **one** fallback row per parent.
+7. Dispatch each child via the canonical wrapper through `Invoke-FleetSignedLane`
+   (`-FallbackOf` set so identity stays shim-derived).
+8. Append a span row for every child (including failed dispatch → `status=error`).
+9. Invoke `Assert-FleetReviewIntegrity` **once** → write effective manifest at
+   `-OutputManifest` (base + proven failovers) and re-emit the `review-integrity:` line.
+
+Original parent failure is preserved; the child is a distinct signed lane. A panel that
+claims five voices while running four is the failure this helper exists to prevent.

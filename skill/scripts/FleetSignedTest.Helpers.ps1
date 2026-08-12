@@ -122,7 +122,7 @@ function New-ReviewReceiptObj {
   return [pscustomobject][ordered]@{
     schema_version = '2'; receipt_type = 'review_lane'; run_id = $RunId; task_id = 'T-adv'
     lane_id = $LaneId; voice_id = $VoiceId; review_role = $Role; requested_model = $Model; observed_model = $Model
-    model_evidence = 'test-fixture'; emitter_id = 'test-emitter'; input_packet_sha256 = $script:FixedSha
+    model_evidence = 'unified-log'; emitter_id = 'test-emitter'; input_packet_sha256 = $script:FixedSha
     expected_lane_manifest_sha256 = $script:FixedSha; locked_plan_sha256 = $planSha
     review_profile = $Profile; charter_path = 'charter.md'; review_tier = $Tier; result_path = $ResultPath
     charter_sha256 = $script:FixedSha; result_sha256 = $ResultSha; exit_code = 0; outcome = $Outcome
@@ -157,9 +157,13 @@ function Write-GitDiffFile([string]$Repo, [string]$BaseRef, [string]$OutFile) {
     if ($proc.ExitCode -ne 0) { throw "git diff failed: $err" }; [IO.File]::WriteAllBytes($OutFile, $ms.ToArray())
   } finally { $ms.Dispose(); $proc.Dispose() }
 }
-function Get-MdVoice([string]$Sev = 'HIGH') { return "## Adversarial review`n### Findings`n- scripts/x.ps1:10 $Sev - problem found. Fix required.`n$pad`n" }
-function Get-NoFindingsVoice { return "## Adversarial review`n### Findings`nnone material - no findings after full pass.`n$pad`n" }
-function Get-JsonVoice { return (@{ status = 'ok'; response = "Review complete. HIGH: edge case checked. $pad" } | ConvertTo-Json -Compress) }
+# Canonical verdict grammar (FleetReviewGrammar.Helpers.ps1): CRITICAL/HIGH => NO-GO terminal.
+function Get-MdVoice([string]$Sev = 'HIGH') {
+  $verdict = if ($Sev -ceq 'CRITICAL' -or $Sev -ceq 'HIGH') { 'NO-GO' } else { 'GO' }
+  return "## Adversarial review`n$pad`n`nVERDICT: $verdict`nFINDINGS:`n- $Sev | F001 | scripts/x.ps1:10 | problem found, fix required`n"
+}
+function Get-NoFindingsVoice { return "## Adversarial review`nfull pass complete.`n$pad`n`nVERDICT: GO`nFINDINGS: none`n" }
+function Get-JsonVoice { return (@{ status = 'ok'; response = "Review complete after full pass. $pad`n`nVERDICT: GO`nFINDINGS: none" } | ConvertTo-Json -Compress) }
 function Get-RefusalJsonVoice { return (@{ status = 'ok'; response = "I cannot perform this security review. $pad" } | ConvertTo-Json -Compress) }
 function Get-NgvJsonVoice { return (@{ status = 'needs_gate_validation'; response = "Review complete. HIGH: edge case checked. $pad" } | ConvertTo-Json -Compress) }
 function Write-Manifest([string]$ReviewDir, [string]$FinalPath, [string]$Body = $null) {

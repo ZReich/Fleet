@@ -119,7 +119,7 @@ single-model collapse:
 | FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security / `review_profile: security-sensitive` MUST dispatch >=1 open-weights security identity (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic `v-glm`/`v-kimi`/`v-kimi-proxy` do not satisfy. A hosted refusal MUST trigger open-weights failover (>=1 real completion from {Kimi, GLM, Grok}); see [references/review-integrity.md](references/review-integrity.md). |
 
 Implementation default for non-design work is Grok 4.5 via `Invoke-Grok45.ps1` (one
-cohesive charter + one structured self-review) — NOT Terra implementing inline. Design,
+cohesive charter + one structured self-check: self-run gates + short checklist) — NOT Terra implementing inline. Design,
 API, and architecture judgment route to Sol and never to Grok. A down voice is
 substituted (GLM cross-family) and recorded `voice_substituted`, never silently dropped.
 
@@ -575,7 +575,7 @@ Canonical labels:
 | Exact file/symbol/reference lookup | Local `rg` or JCodeMunch; no model call |
 | Repo exploration, context packs, long log/diff/test synthesis | Spark (`gpt-5.3-codex-spark`, low) |
 | Hard backend/debugging/state | Grok 4.5 high first; keep cohesive invariants together and use the explicit hard time budget; Codex `gpt-5.6-sol` after failed repair or when judgment is required |
-| Non-design implementation, test-code changes, fixes, refactors, migrations | Grok 4.5 high primary; one structured self-review; Grok runs focused checks and Terra/Codex rerun gates; split only independent boundaries or measured bottlenecks |
+| Non-design implementation, test-code changes, fixes, refactors, migrations | Grok 4.5 high primary; one structured self-check (self-run gates + short checklist, no adversarial essay); Grok runs focused checks and Terra/Codex rerun gates; split only independent boundaries or measured bottlenecks |
 | Failed Grok implementation after self-review and final-audit repair | Terra fallback; Sol for hard/security/architecture judgment |
 | Browser verification | Terra real-Chrome lane (effort high pinned, xhigh escalation-only) with deterministic PASS/FAIL/BLOCKED assertions; see Browser verification lane section |
 | Mechanical coding/refactors/migrations | Grok 4.5 high primary; Luna fallback only |
@@ -699,8 +699,15 @@ write scope and acceptance criteria, and splits only independent boundaries or
 measured context/tool bottlenecks.
 Grok may read any tracked caller, helper, test, config, or dependency needed for
 correctness and choose private implementation details within the locked contract.
-Each Grok wave gets one structured adversarial self-review/fix pass before the
-barrier. Grok runs focused executable checks; Terra/Codex rerun gates and return
+Each Grok wave gets one structured self-check pass before the barrier, and its
+content is defined here (owner-codified 2026-08-12): MANDATORY self-run
+deterministic gates — Grok executes psvalid/its own tests on its write scope and
+quotes the result lines (this, not prose review, produced the zero-hand-fix
+clipins run; LESSONS 2026-08-07) — plus a short (<=10 line) checklist against the
+charter's acceptance criteria. Do NOT charter a freeform adversarial self-review
+essay: Grok's self-assessment of its own trust fixes was refuted twice in
+trustchain (verify-before-charge), the essay adds lane latency, and adversarial
+judgment belongs to the blind panel. Terra/Codex rerun gates and return
 failures as bounded repair evidence. Select the patch
 only when tests, build/typecheck, Fallow, scope, dependency, and file-size gates pass.
 
@@ -821,7 +828,7 @@ Rules:
 - Keep Grok blind to the primary output. Grade both outputs blind before revealing
   model identity.
 - Default trial mode is `grok_review_only`: primary models stop after normal targeted
-  checks, while Grok runs one structured self-review/fix pass before returning its
+  checks, while Grok runs one structured self-check/fix pass (self-run gates + short checklist) before returning its
   candidate. Terra/Codex then rerun identical executable gates before blind scoring.
   Choose between the primary first pass and Grok's reviewed final output.
 - Use `both_review` only on selected benchmark runs. Give both models the same
@@ -885,7 +892,7 @@ before model work. Copy
 [references/terra-grok-tasks.example.json](references/terra-grok-tasks.example.json)
 and replace its three bounded task/path/command placeholders with real repo work.
 This is intentionally `grok_review_only`: Terra Medium returns its normal candidate;
-Grok High includes Fleet's one structured self-review. Give graders only the emitted
+Grok High includes Fleet's one structured self-check (self-run gates + short checklist). Give graders only the emitted
 `blind` folder. Keep `private/reveal.json`, lane logs, runtime fingerprints, and model
 mapping sealed until scoring finishes. Grok transport failure blocks adoption but does
 not hide an otherwise scoreable diff, so charts keep code quality and transport quality separate.

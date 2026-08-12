@@ -17,9 +17,24 @@ Fable/Opus/four-voice drift.
 ## Claude Surface Mapping
 
 - Sol writes the locked plan and returns for blind final verification/arbitration.
-- Terra supervises execution, liveness, integration, gates, and repair routing.
-- Claude root relays status and invokes lanes; it does not replace Sol or Terra.
+- NO standing Terra supervisor lane on this surface (owner-codified 2026-08-12): the
+  Claude root orchestrator IS the main loop and supervises directly — dispatch,
+  liveness, integration, gates, and repair routing. A Terra supervisor here duplicates
+  the main loop and burns handoff cost (briefs packaged + reports read by the expensive
+  model). "Terra supervises" is codex-surface design where Terra is the main loop.
+  Terra keeps three jobs on Claude: failure-fallback implementer when Grok fails,
+  blind panel voice, and architect/devil's-advocate lane. The orchestrator still owns
+  every gate — supervising directly never waives the Fallow/psvalid/lane-span duties.
+- Claude root relays status and invokes lanes; it does not replace Sol's design or
+  arbitration authority.
 - Opus is review-only through the canonical wrapper. Never make Opus supervisor.
+- Grok self-check on this surface (owner-codified 2026-08-12): the mandatory part is
+  the SELF-RUN DETERMINISTIC GATES — Grok executes psvalid/its own tests on its slice
+  before handoff and quotes the result lines (zero-hand-fix evidence, LESSONS
+  2026-08-07) — plus a short (<=10 line) checklist against the charter's acceptance
+  criteria. Do NOT charter a freeform adversarial self-review essay: Grok's
+  self-assessment was refuted twice in trustchain while adding lane latency; the
+  blind panel owns adversarial judgment.
 - Grok 4.5 owns non-design implementation. Never give Grok design judgment (but a
   private/internal signature within the locked contract is Grok's to choose). Grok
   implementation lanes in an isolated worktree get subagents + web default-on.

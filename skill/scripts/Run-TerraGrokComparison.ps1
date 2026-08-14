@@ -134,12 +134,12 @@ function Invoke-Lane([string]$Name, [string]$Worktree, [string]$Prompt, [string]
   }
   if ($null -eq $LaneSpec -and $Name -eq 'grok') {
     $arguments = @('-NoProfile','-ExecutionPolicy','Bypass','-File',$GrokWrapper,'-PromptFile',$PromptPath,'-WorkingDirectory',$Worktree,'-BashCapability','Auto','-IsolatedWorktree','-LeanSystemPrompt','-TimeoutSeconds',[string]$LaneTimeoutSeconds,'-Mode','json')
-    $launch = [ordered]@{ executable='powershell.exe'; wrapper=$GrokWrapper; requested_model='grok-4.5'; requested_effort='high'; shared_prompt_sha256=$PromptHash; args=@($arguments | ForEach-Object { if($_ -eq $PromptPath){'<shared-prompt-file>'}else{$_} }) }
+    $launch = [ordered]@{ executable='powershell.exe'; wrapper=$GrokWrapper; requested_model='grok-4.6'; requested_effort='high'; shared_prompt_sha256=$PromptHash; args=@($arguments | ForEach-Object { if($_ -eq $PromptPath){'<shared-prompt-file>'}else{$_} }) }
     Write-Utf8 (Join-Path $ArtifactRoot 'grok.launch.json') ($launch | ConvertTo-Json -Depth 5)
     $run = Invoke-CapturedProcess 'powershell.exe' $arguments $Worktree $stdoutPath $stderrPath ($LaneTimeoutSeconds + 30)
     $transport = $null; try { $transport = Get-Content -LiteralPath $stdoutPath -Raw | ConvertFrom-Json } catch {}
-    $transportStatus = if ($run.timed_out) { 'timeout' } elseif ($run.exit_code -eq 0 -and $transport.status -eq 'ok' -and $transport.task_status -eq 'done' -and $transport.observed_model -eq 'grok-4.5') { 'ok' } else { 'error' }
-    return [pscustomobject]@{ transport_status=$transportStatus; requested_model='grok-4.5'; requested_effort='high'; observed_model=$transport.observed_model; grok_version=$transport.grok_version; model_evidence=$transport.model_evidence; delivered_prompt_sha256=$transport.effective_prompt_sha256; wrapper_status=$transport.status; session_id=$transport.session_id; run=$run; seconds=[math]::Round(((Get-Date)-$started).TotalSeconds,2) }
+    $transportStatus = if ($run.timed_out) { 'timeout' } elseif ($run.exit_code -eq 0 -and $transport.status -eq 'ok' -and $transport.task_status -eq 'done' -and $transport.observed_model -eq 'grok-4.6') { 'ok' } else { 'error' }
+    return [pscustomobject]@{ transport_status=$transportStatus; requested_model='grok-4.6'; requested_effort='high'; observed_model=$transport.observed_model; grok_version=$transport.grok_version; model_evidence=$transport.model_evidence; delivered_prompt_sha256=$transport.effective_prompt_sha256; wrapper_status=$transport.status; session_id=$transport.session_id; run=$run; seconds=[math]::Round(((Get-Date)-$started).TotalSeconds,2) }
   }
   # Wrapper-driven arm (v2 lane spec)
   $wrapperPath = Resolve-LaneWrapper ([string]$LaneSpec.wrapper)

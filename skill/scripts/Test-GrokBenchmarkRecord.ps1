@@ -67,7 +67,7 @@ function Test-GrokBenchmarkRecord($record, [string[]]$required) {
   if ($record.final_review_catches_total -ne ($record.final_review_catches_by_model.sol + $record.final_review_catches_by_model.terra + $record.final_review_catches_by_model.glm + $record.final_review_catches_by_model.grok + $record.final_review_catches_by_model.opus)) { throw "final_review_catches_total must equal final_review_catches_by_model sum" }
   if ($record.primary_status -eq "done" -and ($null -eq $record.primary_seconds -or $null -eq $record.primary_first_pass_score)) { throw "Completed primary requires duration and first-pass score" }
   if ($record.grok_status -eq "done" -and ($null -eq $record.grok_seconds -or $null -eq $record.grok_first_pass_score -or -not $record.grok_self_review_passed)) { throw "Completed Grok shadow requires duration, first-pass score, and passing self-review" }
-  if ($record.grok_status -eq "done" -and $record.grok_model -ne "grok-4.5") { throw "Completed Grok shadow requires grok_model=grok-4.5" }
+  if ($record.grok_status -eq "done" -and $record.grok_model -ne "grok-4.6") { throw "Completed Grok shadow requires grok_model=grok-4.6" }
   if ($record.grok_status -eq "done" -and $record.grok_effort -ne "high") { throw "Completed Grok first pass requires effective effort high; xhigh is currently unsupported" }
   # high is the current convention (the CLI dropped xhigh/max; the wrapper collapses both
   # to high). "max" stays accepted so the 11 pre-2026-07 rows still validate.

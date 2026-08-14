@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: An opinionated way to build and research with your whole model fleet as one team — planner, implementer, supervisor, and a blind cross-family review panel, so no model grades its own work. Codex-native: Sol plans and owns the final verdict, Terra supervises, Grok implements, Spark/Kimi/Gemini gather evidence, and every change runs risk-scaled adversarial review that can't be skipped.
+description: An opinionated way to build and research with your whole model fleet as one team — planner, implementer, supervisor, and a blind cross-family review panel, so no model grades its own work. Codex-native: Grok 4.6 plans, implements, and owns architecture/non-UI design; Opus 5/Fable own UI design; Sol verifies and holds the final verdict; Terra supervises; Spark/Kimi/Gemini gather evidence; every change runs risk-scaled adversarial review that can't be skipped.
 ---
 
 # Fleet Orchestration for Codex
@@ -22,14 +22,36 @@ That is a statement about the DRIVER, never a license to drop model voices: "Cod
 does not mean "Codex-only". Every lane the selected tier names still dispatches through
 its canonical wrapper, and a Codex model implementing inline instead of dispatching the
 named lane is a contract violation, not a shortcut.
-GPT-5.6 Sol plans and returns for final verification. GPT-5.6 Terra supervises
-execution — supervises, does not implement. Claude Opus 5 is the Opus final-review voice
-(Opus 4.8 = fallback).
+Grok 4.6 plans (owner adoption 2026-08-14, from the sol_replacement shadow ledger:
+Grok won 9/10 blind position-swapped judge passes and went 5-0-3 on graded planning
+pairs vs Sol, Aug 12–14) and owns architecture/non-UI design locks (owner directive
+2026-08-14 — see Design/architecture ownership below). Opus 5 (or the Fable
+orchestrator on the Claude surface) owns UI/visual design. GPT-5.6 Sol
+returns for final plan-coverage verification and owns the final verdict — the planner
+swap deliberately makes final verification cross-family (Grok plans+implements, Sol
+verifies). GPT-5.6 Terra supervises execution — supervises, does not implement.
+Claude Opus 5 is the Opus final-review voice (Opus 4.8 = fallback).
 
-Use Grok 4.5 as the default implementer for non-design work. Give it one cohesive
+Use Grok 4.6 as the default implementer. Give it one cohesive
 charter; split only independent boundaries or measured context/tool bottlenecks
 instead of routing routine implementation to Terra or Luna.
-Never assign Grok design judgment.
+
+Design/architecture ownership (owner directive 2026-08-14, supersedes every older
+"Grok never makes design decisions" line in this file):
+
+- **Grok 4.6 owns architecture and non-UI design** — system design, data model,
+  API shape, service boundaries. High default; xhigh for ambiguous/high-impact.
+- **UI/visual design routes to Claude: Opus 5** (`[CLAUDE OPUS 5 · UI DESIGN]` via the
+  canonical Opus wrapper) — visual hierarchy, layout, interaction feel, product copy.
+  On the Claude surface the Fable orchestrator may do this lane inline instead
+  (owner: "Fable or Opus 5 does UI design — they do a better-looking piece").
+- **Big new features** (FULL tier or feature-scale scope): pair a
+  `[GPT-5.6 SOL · SHADOW]` on Grok's design/architecture lock (same frozen brief,
+  recorded to BENCH-shadow.jsonl as `genre:design`/`genre:architecture` — this builds
+  the design ledger that does not exist yet) AND a `[FABLE · DESIGN REVIEW]` (Claude
+  surface) or `[CLAUDE OPUS 5 · DESIGN REVIEW]` (Codex surface) pass over the lock
+  before build starts.
+- Sol retains security/product judgment escalations and the final verdict.
 
 Kimi K3 is a measured design/plan candidate, not an automatic replacement for
 Sol. Read references/kimi-k3.md before selecting it.
@@ -118,7 +140,7 @@ single-model collapse:
 | STANDARD | Sol + Terra + one specialist third voice by change type |
 | FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security / `review_profile: security-sensitive` MUST dispatch >=1 open-weights security identity (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic `v-glm`/`v-kimi`/`v-kimi-proxy` do not satisfy. A hosted refusal MUST trigger open-weights failover (>=1 real completion from {Kimi, GLM, Grok}); see [references/review-integrity.md](references/review-integrity.md). |
 
-Implementation default for non-design work is Grok 4.5 via `Invoke-Grok45.ps1` (one
+Implementation default for non-design work is Grok 4.6 via `Invoke-Grok45.ps1` (one
 cohesive charter + one structured self-check: self-run gates + short checklist) — NOT Terra implementing inline. Design,
 API, and architecture judgment route to Sol and never to Grok. A down voice is
 substituted (GLM cross-family) and recorded `voice_substituted`, never silently dropped.
@@ -318,14 +340,14 @@ GLM transport in this Codex workflow.
    enable background binary updates. When an update target is reported, validate a
    side-by-side candidate and require that lane's
    offline wrapper suite plus one minimal live transport probe before use. Then probe
-   required primary lanes plus Grok 4.5. Defer Opus, GLM, Gemini, and Kimi probes
+   required primary lanes plus Grok 4.6. Defer Opus, GLM, Gemini, and Kimi probes
    until Sol selects full/review or visual evidence requires Gemini. Light run reports
    label those lanes `not_selected_by_mode`; benchmark rows use status `excluded` with
    exclusion reason `not_selected_by_mode`. Provider outage after verified launch
    never reroutes; local wrapper/PATH/config failures must be repaired before full review.
    Pi print mode proves provider/model configuration but does not expose response-model
    metadata. Mark GLM model-performance attribution `no_contest`/unverified even when
-   the functional lane passes; do not chart it as observed GLM 5.2 identity. Grok's
+   the functional lane passes; do not chart it as observed GLM 5.3 identity. Grok's
    `[cli] auto_update = false` is intentional: `grok update --check --json` remains
    the authoritative non-mutating check, while version promotion stays atomic and
    test-gated. Claude discovery scans every valid installed CLI across PATH, NVM,
@@ -419,7 +441,7 @@ lanes decay — these are now MUSTS:
    Spark entirely and go straight to LUNA@high** (validated both tests: 8/8 then 11/11
    incl. deep-tail recall at 295KB, faster than Terra at size, ceiling proven >=130k tokens / ~500KB —
    3x test 13/13 @39s; beyond ~500KB or when line-number citations wanted, use
-   Gemini Flash: 13/13 with line cites at 491KB but ~8x slower, batched/async only). One retry-narrower on Spark truncation, then Luna. grok-4.5 only
+   Gemini Flash: 13/13 with line cites at 491KB but ~8x slower, batched/async only). One retry-narrower on Spark truncation, then Luna. grok-4.6 only
    when the read needs live tools or X-search; giant reads beyond Luna's proven range
    go to Gemini (1M window). Record every fallback.
 5. **Accountability:** the final report's utilization table always carries a Spark
@@ -448,32 +470,40 @@ Add `.fleet/` to `.gitignore` when absent.
 
 ## Phase 2 - Wave Graph
 
-**Sol plans; Sol does not explore (owner-codified 2026-08-12 — the planning lane is the
-critical-path head; a 33-minute planner on fleet-rescomp was mostly self-serve context
-gathering).** The plan dispatch MUST carry a pre-assembled brief — the Phase 1
-`.fleet/context.md` (repo sha, relevant files + line refs, helpers to reuse, gate
-commands, constraints, acceptance criteria), built by the orchestrator/Spark BEFORE the
-Sol lane starts. A Sol plan prompt that says "look around the repo and plan" is a
-contract smell. Effort: `high` is the default; reserve `xhigh` for genuinely ambiguous
-or high-impact designs — do not pay xhigh latency for routine wave graphs.
+**Grok 4.6 plans (owner adoption 2026-08-14); the planner does not explore
+(owner-codified 2026-08-12 — the planning lane is the critical-path head; a 33-minute
+planner on fleet-rescomp was mostly self-serve context gathering).** The plan dispatch
+MUST carry a pre-assembled brief — the Phase 1 `.fleet/context.md` (repo sha, relevant
+files + line refs, helpers to reuse, gate commands, constraints, acceptance criteria),
+built by the orchestrator/Spark BEFORE the plan lane starts. A plan prompt that says
+"look around the repo and plan" is a contract smell. Effort: `high` is the default;
+reserve `xhigh` for genuinely ambiguous or high-impact plans — do not pay xhigh latency
+for routine wave graphs.
 
-Dispatch one GPT-5.6 Sol planning session at high effort after the evidence brief,
-through the canonical `scripts/Invoke-Sol.ps1` wrapper (never raw `codex exec` for the Sol
-lane). The wrapper forces `-c model_reasoning_effort="high"` so Sol never inherits the
-config default (`xhigh`, which reads as a hang), resolves the codex launcher deterministically
+Dispatch one `[GROK 4.6 · PLANNER]` session at high effort after the evidence brief,
+through the canonical `Invoke-Grok45.ps1` wrapper (read-only plan lane: `-Review`
+transport, free-form markdown per Harness law — never the worker-JSON envelope).
+The Grok plan may lock architecture and non-UI design decisions itself (owner
+directive 2026-08-14) — record each in the decision ledger. Tasks flagged `ui`
+(visual hierarchy, layout, interaction feel, product copy) get their decisions LOCKED
+by a parallel `[CLAUDE OPUS 5 · UI DESIGN]` pass (Fable inline on the Claude surface)
+and the plan consumes those locks as constraints. On big new features (FULL tier /
+feature-scale scope) add the Sol design/arch shadow + Fable/Opus design review from
+the Design/architecture ownership block before build starts.
+Sol lanes still go through `scripts/Invoke-Sol.ps1` (never raw `codex exec`): the
+wrapper forces `-c model_reasoning_effort="high"` so Sol never inherits the config
+default (`xhigh`, which reads as a hang), resolves the codex launcher deterministically
 (approved-pin hop → codex-0.146.1; codex lives in the nvm node dir, not on PATH), kills a
 0-turn hang the way `Invoke-Grok45` does, and gives the lane its OWN `CODEX_HOME`
 (`New-CodexLaneHome.ps1`) so the model cache is never shared — killing both the skew and the
-parallel write race at the source (4 concurrent Sol lanes proven skew-free). Pass the brief with `-PromptFile`
-(Bash-tool-safe) or `-Prompt`. Use `-Effort xhigh` only for ambiguous/high-impact design,
-architecture, API, or security work.
+parallel write race at the source (4 concurrent Sol lanes proven skew-free).
 In the same call, require `selected_mode`, matched triggers, rationale, and automatic
 escalation conditions using [references/mode-selection.md](references/mode-selection.md).
 Do not spend a separate call on classification. Record its session ID and write its locked plan to
 `docs/superpowers/plans/YYYY-MM-DD-<topic>-fleet.md`.
 
-Instruct Sol to emit a MAXIMALLY PARALLEL wave graph — this is a stated planning
-objective, not a nicety. Sol structures the work so the most tasks possible run
+Instruct the planner to emit a MAXIMALLY PARALLEL wave graph — this is a stated planning
+objective, not a nicety. The planner structures the work so the most tasks possible run
 concurrently in the fewest waves: partition the change into disjoint-file-scope tasks
 that can proceed independently, and add a dependency edge ONLY where task B genuinely
 consumes task A's output or writes the same files. The plan carries a one-line
@@ -498,7 +528,7 @@ Each task needs:
 - required checks
 - flags: `react`, `ui`, `browser`, `cross-repo`
 - `design`: whether the task requires visual, interaction, product, API, or
-  architecture judgment; design tasks route to GPT-5.6 and never to Grok
+  architecture judgment; `ui`-flagged design routes to Opus 5/Fable, architecture/non-UI design locks are the Grok planner's own
 - decision ledger: every locked design/API/architecture choice plus rationale
 - acceptance/evidence matrix: each promised behavior and the proof required
 
@@ -507,14 +537,14 @@ Validation gate before dispatch:
 - `selected_tier` is exactly one of `MICRO`, `LIGHT`, `STANDARD`, `FULL` (legacy
   `light`/`full` and `selected_mode` are normalized to `LIGHT`/`FULL` first); only after
   alias normalization does a missing, invalid, or contradictory value become `FULL`
-  without another Sol call
+  without another planner call
 - every existing path resolves
 - new paths are marked new
 - same-wave file scopes are disjoint
 - merge-order dependencies are not mistaken for build-order dependencies
 - anti-serialization: every dependency edge carries a reason, and no two tasks with
   disjoint file scope and no real data dependency sit in different waves. A needless
-  serial chain fails validation and returns to Sol — the default target is minimum
+  serial chain fails validation and returns to the planner — the default target is minimum
   critical path, and the plan states its `parallel width` / `critical path` line
 
 After validation, run canonical live transport probes for Opus, GLM, and Grok before
@@ -524,12 +554,14 @@ Probe Gemini only when selected for visual evidence. Probe Kimi only when Sol se
 a K3 candidate lane; use `Test-FleetExternalLanes.ps1 -RequireKimi -KimiOnly` so
 a K3 check does not spend time on unrelated external lanes.
 
-Sol does not supervise, crawl the repo, or read long gate logs. Terra high owns
+The planner does not supervise, crawl the repo, or read long gate logs. Terra high owns
 dispatch, liveness, worktree/scope enforcement, barriers, evidence compression,
 repair routing, and mechanical review dedupe. Terra xhigh is exceptional for
 ambiguous integration/gate diagnosis. If execution reveals a new semantic fact that
-invalidates the plan, pause affected work and send one batched re-plan brief to Sol;
-Terra must not improvise product, API, architecture, security, or design semantics.
+invalidates the plan, pause affected work and send one batched re-plan brief to the
+Grok planner session (architecture/API/data-model facts included — Grok owns those
+now); UI-design semantics re-route to the Opus 5/Fable UI lane, and security or
+product-judgment facts go to Sol — Terra must not improvise any of them.
 
 ## Visible Lane Identity - Mandatory
 
@@ -540,12 +572,12 @@ the Codex sidebar truncates long task names.
   lowercase snake case required by `spawn_agent`, for example:
   `grok45_implementer_t4_ingest_integration`,
   `gpt56terra_fallback_t4_ingest_integration`, and
-  `glm52_review_t4_edge_contracts`. This `<model><role>_t<n>_<slug>` form
+  `glm53_review_t4_edge_contracts`. This `<model><role>_t<n>_<slug>` form
   (`^[a-z][a-z0-9_]*$`, model + role + `t<n>` mandatory) is the AUTHORITATIVE compliant
   fallback on any surface that cannot render the bracket label (Sol-locked 2026-08-11).
 - Display every task, update, heartbeat, log heading, and final-report row as
   `[MODEL · ROLE] T# — action`, for example
-  `[GROK 4.5 · IMPLEMENTER] T4 — Ingest integration`.
+  `[GROK 4.6 · IMPLEMENTER] T4 — Ingest integration`.
 - Use exact model names, not generic `Codex`, `Grok`, `GLM`, or `Gemini` labels.
   Resolve the model before dispatch. Roles include `MANAGER`, `PRIMARY`, `SHADOW`,
   `DESIGN`, `REVIEW`, `BROWSER`, and `VISUAL EVIDENCE`.
@@ -566,8 +598,8 @@ Canonical labels:
 | GPT-5.6 Sol | `[GPT-5.6 SOL · <ROLE>]` |
 | GPT-5.6 Terra | `[GPT-5.6 TERRA · <ROLE>]` |
 | GPT-5.6 Luna | `[GPT-5.6 LUNA · <ROLE>]` |
-| Grok 4.5 | `[GROK 4.5 · <ROLE>]` |
-| GLM 5.2 | `[GLM 5.2 · <ROLE>]` |
+| Grok 4.6 | `[GROK 4.6 · <ROLE>]` |
+| GLM 5.3 | `[GLM 5.3 · <ROLE>]` |
 | Gemini 3.6 Flash | `[GEMINI 3.6 FLASH · VISUAL EVIDENCE]` |
 | Kimi K3 | `[KIMI K3 · <ROLE>]` |
 | Claude Opus 5 | `[CLAUDE OPUS 5 · REVIEW]` |
@@ -577,31 +609,33 @@ Canonical labels:
 
 | Work | Lane |
 | --- | --- |
-| Locked wave plan, design/API/architecture decisions | GPT-5.6 Sol high; xhigh only when ambiguous/high-impact |
+| Locked wave plan / decomposition (non-design) | Grok 4.6 high (`[GROK 4.6 · PLANNER]`, read-only lane; owner adoption 2026-08-14); xhigh only when ambiguous/high-impact |
+| Architecture + non-UI design decisions (API shape, data model, service boundaries; incl. locks consumed by the plan) | Grok 4.6 high; xhigh when ambiguous/high-impact (owner 2026-08-14). Big new features: + `[GPT-5.6 SOL · SHADOW]` pair (ledger `genre:design`/`architecture`) + Fable/Opus 5 design review |
 | Supervision, integration, gates, mechanical dedupe | GPT-5.6 Terra high; xhigh only for exceptional ambiguity |
-| Final plan-coverage verification and verdict | Resume planner Sol session |
+| Final plan-coverage verification and verdict | Fresh GPT-5.6 Sol session (cross-family check on the Grok plan — the planner never verifies its own coverage) |
 | Routine arbitration (mechanical disputes, dedupe, gate disagreements) | GPT-5.6 Terra high (research3); Sol arbitration reserved for design/security/hard judgment and FULL cross-family review scoring |
 | Exact file/symbol/reference lookup | Local `rg` or JCodeMunch; no model call |
 | Repo exploration, context packs, long log/diff/test synthesis | Spark (`gpt-5.3-codex-spark`, low) |
-| Hard backend/debugging/state | Grok 4.5 high first; keep cohesive invariants together and use the explicit hard time budget; Codex `gpt-5.6-sol` after failed repair or when judgment is required |
-| Non-design implementation, test-code changes, fixes, refactors, migrations | Grok 4.5 high primary; one structured self-check (self-run gates + short checklist, no adversarial essay); Grok runs focused checks and Terra/Codex rerun gates; split only independent boundaries or measured bottlenecks |
+| Hard backend/debugging/state | Grok 4.6 high first; keep cohesive invariants together and use the explicit hard time budget; Codex `gpt-5.6-sol` after failed repair or when judgment is required |
+| Non-design implementation, test-code changes, fixes, refactors, migrations | Grok 4.6 high primary; one structured self-check (self-run gates + short checklist, no adversarial essay); Grok runs focused checks and Terra/Codex rerun gates; split only independent boundaries or measured bottlenecks |
 | Failed Grok implementation after self-review and final-audit repair | Terra fallback; Sol for hard/security/architecture judgment |
 | Browser verification | Terra real-Chrome lane (effort high pinned, xhigh escalation-only) with deterministic PASS/FAIL/BLOCKED assertions; see Browser verification lane section |
-| Mechanical coding/refactors/migrations | Grok 4.5 high primary; Luna fallback only |
-| Design, UX, visual hierarchy, interactions, product copy, public/cross-service API + architecture decisions | Codex `gpt-5.6-sol`, high minimum; xhigh when ambiguous or high-impact; Grok prohibited (Grok may choose private/internal signatures within the locked contract) |
-| Visual QA and design review | Codex `gpt-5.6-sol`; Gemini Low runs one batched parallel evidence pass on visually important UI, never final judgment |
-| Visually-important UI/design (`ui` flag) | `[KIMI K3 · DESIGN PROPOSAL]` dispatches BY DEFAULT in parallel with Sol's design pass (frozen brief + copied screenshots -> full proposal/HTML/CSS as text); Sol still locks. Every pair scored into the design-off ledger (feeds the kimi-k3.md 30-pair promotion experiment). K3 is exceptional at visual/3D per owner + vendor data — measure it here |
+| Mechanical coding/refactors/migrations | Grok 4.6 high primary; Luna fallback only |
+| UI/visual design: visual hierarchy, layout, interactions, product copy | `[CLAUDE OPUS 5 · UI DESIGN]` via canonical Opus wrapper (Fable orchestrator inline on the Claude surface) — owner 2026-08-14: Claude models produce the better-looking piece. Public/cross-service API + architecture moved to the Grok row above |
+| Visual QA and design review | Fable (Claude surface) or Opus 5 (Codex surface); Gemini Low runs one batched parallel evidence pass on visually important UI, never final judgment |
+| Visually-important UI/design (`ui` flag) | `[KIMI K3 · DESIGN PROPOSAL]` dispatches BY DEFAULT in parallel with the Opus 5/Fable UI-design pass (frozen brief + copied screenshots -> full proposal/HTML/CSS as text); the Opus/Fable lane still locks. Every pair scored into the design-off ledger (feeds the kimi-k3.md 30-pair promotion experiment). K3 is exceptional at visual/3D per owner + vendor data — measure it here |
 | Runnable visual/3D prototype iteration | `[KIMI K3 · DESIGN WORKSPACE]` (`Invoke-KimiK3.ps1 -DesignWorkspace`): Write/Edit/Read scoped to an ephemeral sandbox ONLY (no repo/shell/web/subagents; escape fails closed). Returns the prototype files as frozen artifacts |
 | Whole-repo review / giant multi-file diff / multi-day plan challenge (all-in packet > 250 KiB, cross-cutting) | `[KIMI K3 · LONG-HORIZON]` artifact lane with the full corpus embedded (1M context); selected mechanically by packet size, not memory |
-| Long-context plan challenge, independent design red team | Kimi K3 frozen-artifact candidate lane; Sol locks decisions and gives final verdict |
-| Measuring Grok's design taste (not shipping it) | Optional `[GROK · DESIGN PROPOSAL]` frozen-artifact, no-write candidate lane in explicit benchmark mode only, mirroring Kimi; proposals never ship. Quarterly blind design-off, cross-family graded, predeclared non-inferiority bar; passing promotes only to "Grok may propose, Sol locks." This is also the counterweight that samples the stratum the shadow `coverage_scope` filter excludes |
+| Long-context plan challenge, independent design red team | Kimi K3 frozen-artifact candidate lane; the owning authority locks (Grok arch/non-UI, Opus 5/Fable UI) and Sol gives the final verdict |
+| Measuring Grok's UI-design taste (not shipping it) | SUPERSEDED for architecture/non-UI design (Grok owns those since 2026-08-14). For UI only: optional `[GROK · DESIGN PROPOSAL]` frozen-artifact, no-write candidate lane in explicit benchmark mode, mirroring Kimi; proposals never ship. Blind design-off, cross-family graded, predeclared non-inferiority bar; passing promotes only to "Grok may propose, Opus/Fable locks" |
 | Broad web research / red-team sweep needing agent fan-out | Kimi K3 `[KIMI K3 · RESEARCH]` swarm lane (`-ResearchSwarm`; network + AgentSwarm on, no repo/write) when Sol judges breadth needs it; single lookups stay on `rg`/Spark/Grok X. Live transport + model-refusal proven 2026-07-18 |
-| Security scanning / vuln audit of our own code (defensive) | TWO open-weights voices dispatch BY DEFAULT alongside the panel whenever a security trigger selects FULL (owner directive 2026-07-22). `review_profile: security-sensitive` forces FULL and requires >=1 security-voice **identity** (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic seats do not satisfy ([references/review-integrity.md](references/review-integrity.md)). Both are open-weights (K3 Moonshot, GLM 5.2 Zhipu) and pursue exploit-path analysis — injection chains, deserialization, authz-bypass construction — more bluntly where hosted models (Sol especially, Fable→Opus) soften, generalize, or refuse offensive detail even in a defensive audit. Hosted refusal on this path → open-weights failover per review-integrity.md (never `no_contest`). **They get DIFFERENT repo visibility by design:** `[GLM 5.2 · SECURITY]` runs LIVE read-only against the real checkout (`Invoke-PiGlm.ps1 -ReadOnly -Thinking high`, tools `read,grep,find,ls`; edit/bash/approve denied) so it crawls the whole tree and follows cross-file taint→sink flow on demand. `[KIMI K3 · SECURITY]` stays boxed (ephemeral home + copied creds + auto-approve = no live FS) and instead receives the FULL security-relevant corpus embedded as a frozen artifact — the `[KIMI K3 · LONG-HORIZON]` full-repo pattern (1M context), assembled by the manager with `rg`, NOT a diff-only packet. Repo bigger than ~1M tokens: scope the embed to the security surface (auth, input handling, routes, query/DB construction, deserialization, file I/O, crypto, secrets) or chunk; GLM's live lane has no embed limit. They run concurrently with each other and the panel, so two open-weights security voices cost no extra wall-clock. Findings are ADDITIVE — any voice's security finding counts once verified against source; Sol keeps the final security verdict, and neither K3 nor GLM grades other models. Defensive audit of OUR OWN code only — never third-party targets |
+| Security scanning / vuln audit of our own code (defensive) | THREE security voices dispatch BY DEFAULT alongside the panel whenever a security trigger selects FULL (owner directives 2026-07-22 + 2026-08-14): the two open-weights voices below PLUS `[GROK 4.6 · SECURITY]` promoted from backup to default third voice — live read-only lane via `Invoke-Grok45.ps1 -Review`; hosted but does not shy from exploit-path detail on defensive audits, and costs no extra wall-clock. `review_profile: security-sensitive` forces FULL and requires >=1 security-voice **identity** (`v-glm-security`, `v-kimi-security`, or `v-grok-security`) — generic seats do not satisfy ([references/review-integrity.md](references/review-integrity.md)). The open-weights pair (K3 Moonshot, GLM 5.3 Zhipu) pursue exploit-path analysis — injection chains, deserialization, authz-bypass construction — most bluntly where hosted models (Sol especially, Fable→Opus) soften, generalize, or refuse offensive detail even in a defensive audit. **Refusal cascade (owner 2026-08-14): SOFTENING COUNTS AS REFUSAL.** A Sol security lane that returns generalized/hedged output missing the charter-required exploit-path detail is marked `hosted_refusal_soft`; its analysis slice re-dispatches to Grok 4.6 on the same charter, and the GLM/K3 failover per review-integrity.md stands (never `no_contest`). Log every refusal/softening event as a ledger row (run, lane, trigger) — that count decides whether Grok becomes security primary later. **They get DIFFERENT repo visibility by design:** `[GLM 5.3 · SECURITY]` runs LIVE read-only against the real checkout (`Invoke-PiGlm.ps1 -ReadOnly -Thinking high`, tools `read,grep,find,ls`; edit/bash/approve denied) so it crawls the whole tree and follows cross-file taint→sink flow on demand. `[KIMI K3 · SECURITY]` stays boxed (ephemeral home + copied creds + auto-approve = no live FS) and instead receives the FULL security-relevant corpus embedded as a frozen artifact — the `[KIMI K3 · LONG-HORIZON]` full-repo pattern (1M context), assembled by the manager with `rg`, NOT a diff-only packet. Repo bigger than ~1M tokens: scope the embed to the security surface (auth, input handling, routes, query/DB construction, deserialization, file I/O, crypto, secrets) or chunk; GLM's live lane has no embed limit. They run concurrently with each other, Grok's security lane, and the panel, so three security voices cost no extra wall-clock. Findings are ADDITIVE — any voice's security finding counts once verified against source; Sol keeps the final security verdict while it engages with the findings (the verdict needs judgment, not offensive detail, so it usually survives provider filters) — if Sol refuses the verdict itself, `[GROK 4.6 · SECURITY]` holds the fallback verdict (cross-family from the GLM/K3 finders); K3 and GLM still never grade other models. Defensive audit of OUR OWN code only — never third-party targets |
 | Giant-context reads, Google-grounded research | Antigravity/Gemini |
-| Real-world/X research | Grok 4.5 |
+| Real-world/X research | Grok 4.6 |
 | Mechanical lanes: receipt validation, lane-fit aggregation, exploration/parse-only | Fast tier: Gemini flash or forced-low effort; metric = `duration_s` on mechanical lanes |
 | Author-Judge Independence | Author/repair model never owns that stage's final acceptance; `verify-N` uses an independent stronger-judgment voice (cross-family where risk warrants) |
 | change-map / merge-readiness stage routing | See [references/routing-evidence.md](references/routing-evidence.md) (provenance only; internal ledgers dominate) |
+| Every Sol lane (plan / ratify / design-lock / arbitration / verdict) | `[GROK 4.6 · SOL-SHADOW]` paired read-only shadow dispatches BY DEFAULT concurrent with Sol (same frozen brief); Sol still owns + ships. Recorded to `BENCH-shadow.jsonl` `coverage_scope=sol_replacement`. See Grok-shadows-Sol replacement benchmark |
 
 Use Codex native subagents when the active tool surface exposes them. Otherwise
 use `codex exec` only for Codex worker lanes, preferably in a separate worktree
@@ -797,6 +831,56 @@ provenance on every row) and the canary set (`fleet-canaries.json`,
 `Enqueue-FleetCanary.ps1`, `repeat_count=3`, `sampling_rate_source='forced_canary'`,
 canary rows labeled and never sole ship gates).
 
+## Grok-shadows-Sol replacement benchmark (owner-directed 2026-08-12)
+
+**ADOPTED for the plan lane (owner decision 2026-08-14).** On the accumulated ledger
+(20 graded pairs Aug 12–14: Grok 9/10 blind position-swapped judge passes, planning
+5-0-3, review 3-5-4), the owner promoted Grok 4.6 to primary planner ahead of the
+30-row Wilson bar — an explicit owner call, exactly as this section requires. **No
+plan-lane shadow either direction (owner 2026-08-14): Grok plans solo — a paired Sol
+shadow-plan just slows the critical-path head, and the planning evidence is deemed
+sufficient.** Plan-genre `sol_replacement` rows stop accumulating; re-open a paired
+plan lane only on owner request or a suspected Grok-planner regression.
+Architecture/non-UI design moved to Grok too (owner 2026-08-14) — on BIG NEW FEATURES
+Sol shadow-pairs Grok's design/arch lock (`genre:design`/`genre:architecture` rows;
+this builds the design ledger that had zero rows when the call was made) with a
+Fable/Opus 5 design review over the lock. Arbitration and final-verdict lanes are
+UNCHANGED: Sol stays primary there, and Grok's shadow on those lanes continues as
+below. Review-genre pairs keep favoring Sol — that is why the final verdict did NOT
+move.
+
+Original goal: measure whether Grok 4.6 can replace Sol as architect/planner — Grok is far
+cheaper and faster. This is the INVERSE of the
+Grok-eligible implementation shadow above (`coverage_scope=shadow_eligible`, which excludes
+design/planning by construction): here we shadow exactly the lanes that filter skips — Sol's
+own. Default ON, additive, never gates or ships; on non-plan lanes Sol stays the authority
+and the sole ship path, Grok's shadow output is recorded only.
+
+For every remaining Sol lane in a run — PLAN-mode ratify (P4), non-mechanical
+arbitration, and the final plan-coverage verdict — dispatch a PAIRED
+`[GROK 4.6 · SOL-SHADOW]` lane on the SAME frozen brief/charter/packet Sol received
+(`Invoke-Grok45.ps1 -PromptFile`, read-only, `SHADOW_COVERED:<run>/<lane>` marker, no write
+scope, no ship). Run it CONCURRENT with Sol: it uses Grok's own transport, does not draw from
+the implementer slot pool, and planning/ratify are not slot-constrained — so unlike the async
+impl shadow it stays off the critical path while still capturing the wall-time delta the owner
+cares about. In PLAN mode the plan-lane pairing is ALREADY the Phase P1 Grok 4.6 diverge seat +
+contribution ledger; this benchmark adds only the ratify/arbitration/verdict pairings there,
+and covers the plan lane too on normal (non-PLAN-mode) runs.
+
+The FULL-tier blind panel already seats Grok 4.6 as an independent cross-family voice, so Sol's
+REVIEW scoring is already comparably covered — do NOT add a separate review shadow; read the
+existing panel scores for that comparison.
+
+Record each paired outcome to `BENCH-shadow.jsonl` with `coverage_scope=sol_replacement` and a
+`genre` for the shadowed lane (`planning`, `ratify`, `arbitration`, `design`, `verdict`); grade
+Sol-vs-Grok output with the normal blind machinery under an independent cross-family judge
+(author-judge independence per Routing). End of run, `Get-FleetLaneFit.ps1` prints the
+`shadow:sol_replacement` tie-adjusted win rate + Wilson 95% CI, and `?` below 30 eligible rows —
+so a handful of runs is NOT a verdict; the experiment accumulates across runs until the bar is
+met. Adoption (actually replacing Sol) stays an explicit owner decision on that accumulated
+evidence, never an auto-promotion. `coverage_scope=sol_replacement` keeps this win-rate from
+ever being read as the Grok-eligible-impl number or a global verdict.
+
 ### Live shadow replay (as-built)
 
 `Enqueue-FleetShadow.ps1` optional snapshot params: `-TaskSpecJson` (JSON string with
@@ -843,19 +927,21 @@ Rules:
 - Use `both_review` only on selected benchmark runs. Give both models the same
   review/fix budget and label those rows separately; never make slow-model review
   the normal wave barrier.
-- Use Grok effort `high`; current CLI `0.2.99` exposes only low/medium/high, so
-  requested `xhigh` and `max` are aliases of effective `high`. Do not label, score,
-  or chart high-vs-xhigh experiments until version-keyed live proof shows distinct
-  effective effort. Record the effective value as `high`; exclude unsupported
-  variants rather than creating fake comparison rows.
-- Never send Grok a design task. Design includes visual direction, layout choice,
-  hierarchy, motion, interaction behavior, product copy, PUBLIC or CROSS-SERVICE API
-  shape, and architecture. GPT-5.6 Sol owns those decisions at high minimum or xhigh
-  for ambiguity/high impact. A private/internal helper signature within the locked
-  external contract is Grok's to choose; it escalates only when a public or
-  cross-service interface would change.
-- Grok may implement a design only after GPT-5.6 has locked exact behavior and visual
-  constraints. If a design choice remains, Grok must stop and return `blocked`.
+- Use Grok effort `high` as the default. Grok 4.6 on CLI >= 1.0.x has a REAL `xhigh`
+  tier (wrapper passes it through only when `$ExpectedModel -eq "grok-4.6"`; on any
+  other model xhigh/max still collapse to high — the old 0.2.99 alias note is
+  superseded). OWNER TRIAL (2026-08-14): the next adversarial-review Grok lane runs
+  `-Effort xhigh` as a labeled benchmark row (target: the under-commitment loss
+  pattern — Grok rating subtle async/security seams WATCH where Sol commits BLOCK).
+  Record requested vs effective effort per row; compare against Grok-high and
+  Sol-high baselines before making xhigh a review default.
+- Design routing (owner 2026-08-14): Grok owns architecture and non-UI design —
+  public/cross-service API shape, data model, service boundaries — at high, xhigh for
+  ambiguity/high impact. UI design (visual direction, layout choice, hierarchy,
+  motion, interaction behavior, product copy) is NOT Grok's: it routes to Opus 5
+  (Fable inline on the Claude surface). Grok implements UI only after the Opus/Fable
+  lane has locked exact behavior and visual constraints; if a UI design choice
+  remains, Grok must stop and return `blocked`.
 - In explicit benchmark mode only, Grok may compare analysis of captured functional
   browser evidence. It never judges design quality or drives the user's browser.
 - Benchmark shadows ride to the wave barrier under the same task budget. Timeout or
@@ -884,7 +970,7 @@ Read [references/benchmark-schema.md](references/benchmark-schema.md) before
 writing a benchmark record. It defines v7 fields for final-review deltas, scope,
 churn, tokens, latency, cost provenance, and energy/carbon availability.
 
-For an explicit Terra Medium versus Grok 4.5 High comparison, create a JSON task
+For an explicit Terra Medium versus Grok 4.6 High comparison, create a JSON task
 file with at least two entries under `tasks`. Each entry needs `id`, `prompt`,
 `allowed_paths`, optional `max_diff_lines`, and trusted `gate_commands`. Task-file
 v2 may add optional `lane_a` / `lane_b` objects `{name, wrapper, model, effort}`;
@@ -1020,7 +1106,9 @@ Pi wrapper for GLM in Codex and Claude (`Invoke-PiGlm.ps1`). It loads the Z.ai k
 from existing OpenCode auth (never prints it), runs Pi print mode, sends prompts
 over stdin, closes stdin immediately, and never requests cumulative
 `message_update` bodies, emits compact heartbeats on stderr, CLI-pins provider/model
-to `zai`/`glm-5.2`, labels model identity `cli-pinned-unobserved` because Pi print mode
+to `zai`/`glm-5.3` (Pi's catalog has no 5.3 entry yet, so Pi resolves it as a custom model
+id: 200K local context accounting instead of 1M, no reasoning-effort map — a metadata
+ceiling, not a lane failure), labels model identity `cli-pinned-unobserved` because Pi print mode
 does not expose response-model metadata, disables repo extensions, and hard-timeouts with process-tree kill
 (default 900s), and returns only final text or one normalized `-Mode json` result.
 Use `-NoTools` with frozen artifacts for final reviews, `-ReadOnly` for repo inspection,

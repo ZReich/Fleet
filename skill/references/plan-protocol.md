@@ -33,8 +33,8 @@ Six independent plans, same charter + pack, no planner sees another's draft:
 |---|---|---|
 | Fable 5 high | Claude Agent tool `model: fable` (from Claude Code) | see Fable-seat rule below |
 | Sol xhigh | `codex exec` | architecture/security emphasis |
-| Grok 4.5 high | `Invoke-Grok45.ps1` read-only, subagents+web on | implementer's-eye plan: sequencing, effort, gotchas |
-| GLM 5.2 Thinking high | `Invoke-PiGlm.ps1` | general + long-reasoning |
+| Grok 4.6 high | `Invoke-Grok45.ps1` read-only, subagents+web on | implementer's-eye plan: sequencing, effort, gotchas |
+| GLM 5.3 Thinking high | `Invoke-PiGlm.ps1` | general + long-reasoning |
 | Kimi K3 | `Invoke-KimiK3Proxy.ps1` (proxy analysis lane, bounded <15 min) | cite-verify rules in prompt |
 | Gemini 3.1 Pro High | `agy --model "Gemini 3.1 Pro (High)"` (verify exact tier name at first use; fall back to highest available Pro tier) | grounded standards/UX-convention sweep |
 

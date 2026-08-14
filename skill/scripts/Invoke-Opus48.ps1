@@ -242,9 +242,11 @@ try {
     $promptText += "`n" + 'DELIVERABLE TRANSPORT (mandatory): your working directory IS the deliverable directory. WRITE each file with the Write tool, complete, one file at a time, most important file FIRST so an interruption still leaves a gradable core. Do NOT paste file contents into your response - the response keeps only your FINAL message and long inline files are silently truncated. After writing, your response carries ONLY: the file manifest (filename + byte count + one-line purpose), the rationale, and the token reference. Never emit a fragment, a "continued from" marker, or instructions to concatenate anything.'
   }
   $promptText += "`n" + $fleetTerseOutputTrailer
-  if ($Model -eq 'claude-opus-5') {
-    # Owner directive 2026-07-26: Opus 5 is markedly verbose; escalate to caveman ULTRA.
-    $promptText += "`n" + 'ULTRA TERSE (Opus 5 mandatory): telegraph style. Fragment over sentence. One line per finding: file:line + defect + trigger + fix. No preamble, no restating the charter, no narrative walkthroughs, no recap, no closing summary. Cut every word that does not change a decision. Evidence (code, diffs, SQL, exact identifiers) stays verbatim and complete — compress prose only. Entire response in ONE message.'
+  if ($Model -like 'claude-opus-*') {
+    # Owner directive 2026-07-26: Opus is markedly verbose; escalate to caveman ULTRA.
+    # 2026-08-12: applies to BOTH Opus seats (4.8 + 5) and bans process-narration leaking
+    # from thinking into the response; the style hook cannot reach thinking, only output.
+    $promptText += "`n" + 'ULTRA TERSE (Opus mandatory): telegraph style. Fragment over sentence. One line per finding: file:line + defect + trigger + fix. No preamble, no restating the charter, no narrative walkthroughs, no recap, no closing summary. HARD BUDGET: findings are a list, one line each; total non-finding prose is 3 lines or fewer for the whole response. NO PROCESS NARRATION in the response: never write "I need to", "let me", "the issue is", "I''m wondering", "so the", "here''s the thing", or any first-person walkthrough of how you reasoned — that belongs in thinking, never in the answer. Cut every word that does not change a decision. Evidence (code, diffs, SQL, exact identifiers) stays verbatim and complete — compress prose only. Entire response in ONE message.'
   }
 
   $claude = Get-ClaudeExecutable

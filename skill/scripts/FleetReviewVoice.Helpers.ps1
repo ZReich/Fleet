@@ -230,7 +230,7 @@ function Test-FleetVoiceContent([string]$Name, [string]$Text, [int64]$Bytes, [bo
   if ($IsSecurityRole -and -not (Test-FleetLaneReviewSubstance -Text $bodyForSub)) {
     return 'security voice lacks completed-review substance (VERDICT|evidence finding|no-findings)'
   }
-  $refusal = Test-FleetLaneRefusal -Result $Text -ExitCode 0 -IsSecuritySensitive:([bool]$IsSecurityRole)
+  $refusal = Test-FleetLaneRefusal -Result $Text -ExitCode 0 -IsSecuritySensitive:([bool]$IsSecurityRole) -DetectSoftening:([bool]$IsSecurityRole)
   if ($refusal.refused) {
     $why = $refusal.reason; if ([string]::IsNullOrWhiteSpace([string]$why)) { $why = 'refused' }
     return "refusal ($why)"

@@ -66,7 +66,7 @@ if ($SelfTest) {
   function Check([string]$n, [bool]$ok) { if ($ok) { Write-Output "PASS $n" } else { Write-Output "FAIL $n"; $script:fail++ } }
   . (Join-Path $PSScriptRoot 'FleetReceiptSignature.Helpers.ps1')
   $secret = [byte[]](1..32); $kid = ('a' * 32)
-  $f = @{ runId = 'r'; taskId = 't'; laneId = 'g'; model = 'grok-4.5'; observedModel = 'grok-4.5'; modelEvidence = 'unified-log'; emitterId = 'e'; inputSha = ('b' * 64); resultSha = ('c' * 64); lockedPlan = ('d' * 64); cheapGate = 'psvalid'; cheapClaim = '0/0'; exitCode = 0; outcome = 'completed'; startedAt = '2026-08-08T00:00:00.0000000Z'; completedAt = '2026-08-08T00:00:10.0000000Z' }
+  $f = @{ runId = 'r'; taskId = 't'; laneId = 'g'; model = 'grok-4.6'; observedModel = 'grok-4.6'; modelEvidence = 'unified-log'; emitterId = 'e'; inputSha = ('b' * 64); resultSha = ('c' * 64); lockedPlan = ('d' * 64); cheapGate = 'psvalid'; cheapClaim = '0/0'; exitCode = 0; outcome = 'completed'; startedAt = '2026-08-08T00:00:00.0000000Z'; completedAt = '2026-08-08T00:00:10.0000000Z' }
   $rec = New-LaneGateReceipt $f $secret $kid $PSScriptRoot
   $dir = Join-Path $env:TEMP ('lanereceipt-selftest-' + [guid]::NewGuid().ToString('n')); New-Item -ItemType Directory -Force -Path $dir | Out-Null
   try {
@@ -93,7 +93,7 @@ $key = Get-FleetRunLeaseKey -RunId $RunId   # @{ KeyId; KeyBytes } from the ACL-
 $grok = [IO.File]::ReadAllText($GrokResult, $utf8) | ConvertFrom-Json
 $grokText = [IO.File]::ReadAllText($GrokResult, $utf8)
 
-$observed = if ($grok.PSObject.Properties['observed_model'] -and $grok.observed_model) { [string]$grok.observed_model } elseif ($grok.PSObject.Properties['model']) { [string]$grok.model } else { 'grok-4.5' }
+$observed = if ($grok.PSObject.Properties['observed_model'] -and $grok.observed_model) { [string]$grok.observed_model } elseif ($grok.PSObject.Properties['model']) { [string]$grok.model } else { 'grok-4.6' }
 $evidence = if ($grok.PSObject.Properties['model_evidence'] -and $grok.model_evidence) { [string]$grok.model_evidence } else { 'unified-log' }
 $ts = [string]$grok.task_status
 $claimedGreen = ($ts -eq 'done') -or (([string]$grok.status) -eq 'ok' -and ($ts -eq '' -or $ts -eq 'done'))

@@ -1,4 +1,4 @@
-# Grok lens template — SPEC (`[GROK 4.5 · SPEC]`)
+# Grok lens template — SPEC (`[GROK 4.6 · SPEC]`)
 
 One of the three FULL-review Grok fan-out lenses (review-protocol.md charter 5). The
 orchestrator copies this into `.fleet/T1-grok-spec.txt` and appends the frozen packet

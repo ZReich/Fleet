@@ -90,7 +90,7 @@ function Get-EnvelopeModelId($Envelope, [string]$Transport) {
   # observed-model claim. Codex JSONL carries no model field on pinned 0.146.1 (probed live
   # 2026-08-11) so Sol/Terra stay requested-pinned until a captured fixture proves one.
   if ($Transport -ceq 'Invoke-Grok45') {
-    $req = 'grok-4.5'; $ev = 'observed-provider:grok-unified-log'; $can = $true
+    $req = 'grok-4.6'; $ev = 'observed-provider:grok-unified-log'; $can = $true
     if ($Envelope -and $Envelope.PSObject.Properties['model'] -and "$($Envelope.model)") { $req = [string]$Envelope.model }
     if ($Envelope -and $Envelope.PSObject.Properties['observed_model'] -and "$($Envelope.observed_model)") {
       $obs = [string]$Envelope.observed_model
@@ -107,7 +107,7 @@ function Get-EnvelopeModelId($Envelope, [string]$Transport) {
       if ($null -ne $hit) { $obs = $hit } elseif ($list.Count -gt 0) { $obs = [string]$list[0] }
     }
   } elseif ($Transport -ceq 'Invoke-PiGlm') {
-    $req = 'glm-5.2'; $ev = 'requested-pinned:pi-provider-model'; $can = $false; $obs = 'unobserved'
+    $req = 'glm-5.3'; $ev = 'requested-pinned:pi-provider-model'; $can = $false; $obs = 'unobserved'
     if ($Envelope -and $Envelope.PSObject.Properties['model'] -and "$($Envelope.model)") { $req = [string]$Envelope.model }
   } elseif ($Transport -ceq 'Invoke-KimiK3') {
     $req = 'kimi-code/k3'; $ev = 'requested-pinned:kimi-cli-config'; $can = $false; $obs = 'unobserved'
@@ -256,7 +256,10 @@ try {
   }
   $modelOk = Test-ModelMatch $reqModel $obsModel $canObs
   $sec = ($ReviewRole -ceq 'security-review')
-  $refusal = Test-FleetLaneRefusal -Result $resultBody -ExitCode $exitCode -IsSecuritySensitive $sec
+  # Softening detection scoped to security-review role (never general): keeps the receipt
+  # outcome consistent with what the integrity gate concludes, so a softened security
+  # review is marked refused AT SOURCE and the failover engine dispatches for it.
+  $refusal = Test-FleetLaneRefusal -Result $resultBody -ExitCode $exitCode -IsSecuritySensitive $sec -DetectSoftening $sec
   $outcome = 'failed'; $refusalReason = $null
   if (-not $modelOk) { $outcome = 'failed' }
   elseif ($refusal.refused) { $outcome = 'refused'; $refusalReason = [string]$refusal.reason }

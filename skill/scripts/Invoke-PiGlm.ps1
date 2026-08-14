@@ -34,7 +34,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $ExpectedProvider = "zai"
-$ExpectedModel = "glm-5.2"
+# Z.ai serves glm-5.3 (unknown model codes 400 "modelCode: does not exist"; 5.3 answers).
+# Pi's bundled catalog has no glm-5.3 entry through 0.84.2, so Pi resolves it as a custom
+# model id cloned from the zai default (glm-5.1): local context accounting 200K not 1M and
+# no reasoning-effort map, so -Thinking rides GLM's own default. Fleet packets sit far under
+# 200K, so this is a metadata ceiling, not a lane failure. Drop this note once Pi ships the entry.
+$ExpectedModel = "glm-5.3"
 $fleetTerseOutputTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
 $proc = $null
 $originalZaiApiKey = [Environment]::GetEnvironmentVariable("ZAI_API_KEY", "Process")

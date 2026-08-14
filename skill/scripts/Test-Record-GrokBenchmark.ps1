@@ -40,7 +40,7 @@ $base = [pscustomobject][ordered]@{
   task_type = "implementation"; task_complexity = "standard"; comparison_mode = "grok_review_only"
   design_flag = $false; primary_charter_sha256 = ("a" * 64); grok_charter_sha256 = ("a" * 64)
   context_sha256 = ("b" * 64); blind_grader = "synthetic-grader"; primary_model = "gpt-5.5"
-  primary_effort = "high"; primary_status = "done"; grok_model = "grok-4.5"; grok_effort = "high"
+  primary_effort = "high"; primary_status = "done"; grok_model = "grok-4.6"; grok_effort = "high"
   grok_review_effort = "high"; grok_status = "done"; result = "primary_win"; adopted = $false
   primary_seconds = 100; grok_seconds = 120; primary_correctness = 40; grok_correctness = 38
   primary_spec = 25; grok_spec = 22; primary_tests = 15; grok_tests = 10

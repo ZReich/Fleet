@@ -119,7 +119,7 @@ if ($scenario -eq "first-turn-alive") {
   $logDirAlive = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
   New-Item -ItemType Directory -Force -Path $logDirAlive | Out-Null
   # Flush via .NET AppendAllText (not Add-Content) so deadline poll cannot race an unflushed pipeline.
-  [IO.File]::AppendAllText($env:FLEET_GROK_MODEL_LOG, ((@{ sid=$sidAlive; pid=$logPid; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress) + "`n"))
+  [IO.File]::AppendAllText($env:FLEET_GROK_MODEL_LOG, ((@{ sid=$sidAlive; pid=$logPid; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress) + "`n"))
   [IO.File]::AppendAllText($env:FLEET_GROK_MODEL_LOG, ((@{ sid=$sidAlive; pid=$logPid; msg="shell.turn.tool_prep_done"; ctx=@{} } | ConvertTo-Json -Compress) + "`n"))
   Start-Sleep -Seconds 3
   Write-Output (@{ sessionId=$sidAlive; requestId="fake"; text="# Review`nAlive first turn." } | ConvertTo-Json -Compress -Depth 4)
@@ -130,7 +130,7 @@ if ($scenario -eq "first-turn-dead") {
   $sidDead = [guid]::NewGuid().ToString("n")
   $logDirDead = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
   New-Item -ItemType Directory -Force -Path $logDirDead | Out-Null
-  [IO.File]::AppendAllText($env:FLEET_GROK_MODEL_LOG, ((@{ sid=$sidDead; pid=$logPid; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress) + "`n"))
+  [IO.File]::AppendAllText($env:FLEET_GROK_MODEL_LOG, ((@{ sid=$sidDead; pid=$logPid; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress) + "`n"))
   Start-Sleep -Seconds 10
   exit 0
 }
@@ -148,7 +148,7 @@ if ($scenario -eq "empty-output") {
   $sidEmpty = [guid]::NewGuid().ToString("n")
   $logDirEmpty = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
   New-Item -ItemType Directory -Force -Path $logDirEmpty | Out-Null
-  @{ sid=$sidEmpty; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
+  @{ sid=$sidEmpty; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
   Write-Output (@{ sessionId=$sidEmpty; requestId="fake"; text=""; structuredOutput=$null } | ConvertTo-Json -Compress -Depth 4)
   exit 0
 }
@@ -160,7 +160,7 @@ if ($scenario -eq "review-markdown") {
   $sidRm = [guid]::NewGuid().ToString("n")
   $logDirRm = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
   New-Item -ItemType Directory -Force -Path $logDirRm | Out-Null
-  @{ sid=$sidRm; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
+  @{ sid=$sidRm; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
   Write-Output (@{ sessionId=$sidRm; requestId="fake"; text="# Review`nFinding: none material." } | ConvertTo-Json -Compress -Depth 4)
   exit 0
 }
@@ -169,7 +169,7 @@ if ($scenario -eq "review-empty") {
   $sidRe = [guid]::NewGuid().ToString("n")
   $logDirRe = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
   New-Item -ItemType Directory -Force -Path $logDirRe | Out-Null
-  @{ sid=$sidRe; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
+  @{ sid=$sidRe; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
   Write-Output (@{ sessionId=$sidRe; requestId="fake"; text="   " } | ConvertTo-Json -Compress -Depth 4)
   exit 0
 }
@@ -216,7 +216,7 @@ if ($isBashProbe) {
   if ($proofPath) { [IO.File]::WriteAllText($proofPath, $proofToken) }
 }
 $sid = [guid]::NewGuid().ToString("n")
-$model = if ($scenario -eq "wrong-model") { "grok-wrong" } else { "grok-4.5" }
+$model = if ($scenario -eq "wrong-model") { "grok-wrong" } else { "grok-4.6" }
 $logDir = Split-Path -Parent $env:FLEET_GROK_MODEL_LOG
 New-Item -ItemType Directory -Force -Path $logDir | Out-Null
 if ($scenario -eq "spaced-log") {
@@ -302,7 +302,7 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     Assert-True ($hbLines.Count -ge 1) "expected at least one heartbeat line in sidecar"
     foreach ($line in $hbLines) {
       $hb = $line | ConvertFrom-Json
-      Assert-True ($hb.type -eq "heartbeat" -and $hb.lane -eq "grok-4.5" -and $null -ne $hb.elapsed_seconds) "malformed heartbeat line: $line"
+      Assert-True ($hb.type -eq "heartbeat" -and $hb.lane -eq "grok-4.6" -and $null -ne $hb.elapsed_seconds) "malformed heartbeat line: $line"
     }
     Assert-True ($run.Stderr -notmatch '"type"\s*:\s*"heartbeat"') "heartbeat leaked onto stderr"
     Assert-True ($run.Raw -notmatch '"type"\s*:\s*"heartbeat"') "heartbeat leaked onto stdout"
@@ -346,7 +346,7 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
   Case "phase telemetry is emitted" { $run = Run-Wrapper "success"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.model_turns -eq 1 -and $json.model_seconds -eq 1.25 -and $json.tool_call_count -eq 1 -and $json.tool_seconds -eq 0.25 -and $json.final_prompt_tokens -eq 500) "missing phase telemetry" }
   Case "explicit turn cap remains available" { $run = Run-Wrapper "explicit-turn-cap" 10 -Review -MaxTurns 37; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.max_turns -eq 37) "explicit max turns not forwarded" }
   Case "recovered tool error is trusted telemetry" { $run = Run-Wrapper "recovered-tool-error"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.tool_error_count -eq 1) "expected one trusted tool error" }
-  Case "spaced reordered log evidence is captured" { $run=Run-Wrapper "spaced-log";$json=$run.Raw|ConvertFrom-Json;Assert-True ($run.ExitCode -eq 0 -and $json.observed_model -eq "grok-4.5" -and $json.tool_error_count -eq 1) "expected structural log attribution" }
+  Case "spaced reordered log evidence is captured" { $run=Run-Wrapper "spaced-log";$json=$run.Raw|ConvertFrom-Json;Assert-True ($run.ExitCode -eq 0 -and $json.observed_model -eq "grok-4.6" -and $json.tool_error_count -eq 1) "expected structural log attribution" }
   Case "progress JSON before final envelope succeeds" { $run=Run-Wrapper "progress-json"; Assert-True ($run.ExitCode -eq 0) "expected progress-tolerant success" }
   Case "multiline final envelope succeeds" { $run=Run-Wrapper "multiline-final"; Assert-True ($run.ExitCode -eq 0) "expected multiline success" }
   Case "multiline progress then multiline final succeeds" { $run=Run-Wrapper "multiline-progress-final"; Assert-True ($run.ExitCode -eq 0) "expected concatenated multiline success" }
@@ -547,7 +547,7 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     Assert-True (-not (Test-GrokFirstTurnSeen -ProcessId $probePid -Offset $offset)) "empty log must be unseen"
     [IO.File]::WriteAllText($probeLog, ((@{ sid="s1"; pid=1; msg="shell.turn.tool_prep_done"; ctx=@{} } | ConvertTo-Json -Compress) + "`n"))
     Assert-True (-not (Test-GrokFirstTurnSeen -ProcessId $probePid -Offset $offset)) "other pid must be ignored"
-    [IO.File]::AppendAllText($probeLog, ((@{ sid="s2"; pid=$probePid; msg="model changed"; ctx=@{model="grok-4.5"} } | ConvertTo-Json -Compress) + "`n"))
+    [IO.File]::AppendAllText($probeLog, ((@{ sid="s2"; pid=$probePid; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress) + "`n"))
     Assert-True (-not (Test-GrokFirstTurnSeen -ProcessId $probePid -Offset $offset)) "model-changed alone is not first turn"
     # POSITIVE: matching pid + tool_prep_done
     [IO.File]::AppendAllText($probeLog, ((@{ sid="s3"; pid=$probePid; msg="shell.turn.tool_prep_done"; ctx=@{} } | ConvertTo-Json -Compress) + "`n"))

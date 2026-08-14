@@ -114,7 +114,11 @@ function Test-EligibleFailover($refused, $fo) {
   if ($null -eq $tFo -or $null -eq $tRef -or $tFo -lt $tRef) { return $false }
   $vr = Read-ResultVerified $fo
   if (-not $vr.Ok) { return $false }
-  if (-not (Test-FailoverEligible -ResultText $vr.Content -ExitCode ([int]$fo.exit_code))) { return $false }
+  # Softening bar on the failover completion only when the REFUSED PARENT was a security
+  # review (derive from the parent receipt role, never a literal $true — a general failover
+  # child must not be held to the security bar, which would deadlock the gate).
+  $foSec = ([string]$refused.review_role -ceq 'security-review')
+  if (-not (Test-FailoverEligible -ResultText $vr.Content -ExitCode ([int]$fo.exit_code) -DetectSoftening $foSec)) { return $false }
   return $true
 }
 function Test-ExactSpan($spanByLane, [string]$LaneId, $r, [bool]$ExpectRefused) {
@@ -252,7 +256,10 @@ foreach ($r in @($receipts)) {
       }
       $vr = Read-ResultVerified $r
       if (-not $vr.Ok) { Emit-Result 'FAILED' $hosted.Count 0 0 $vr.Err; exit 1 }
-      $chk = Test-FleetLaneRefusal -Result $vr.Content -ExitCode ([int]$r.exit_code) -IsSecuritySensitive $true
+      # Softening scoped to security-review receipts only (never general hosted lanes):
+      # a general review in the canonical VERDICT/FINDINGS grammar must not be soft-flagged.
+      $secReview = ([string]$r.review_role -ceq 'security-review')
+      $chk = Test-FleetLaneRefusal -Result $vr.Content -ExitCode ([int]$r.exit_code) -IsSecuritySensitive $true -DetectSoftening $secReview
       if ($chk.refused) { $isRefused = $true }
     }
     if ($isRefused) { [void]$refusedHosted.Add($r); $effectivelyRefused[$lid] = $true }

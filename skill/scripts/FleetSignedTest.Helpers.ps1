@@ -203,7 +203,7 @@ function Get-ModelForName([string]$Name) {
   $n = $Name.ToLowerInvariant()
   if ($n -match 'sol') { return 'sol' }; if ($n -match 'terra') { return 'terra' }
   if ($n -match 'opus') { return 'claude-opus-5' }; if ($n -match 'kimi') { return 'kimi-k3' }
-  if ($n -match 'glm') { return 'glm-5.2' }; if ($n -match 'grok') { return 'grok-4.5' }
+  if ($n -match 'glm') { return 'glm-5.3' }; if ($n -match 'grok') { return 'grok-4.6' }
   if ($n -match 'fable') { return 'fable' }
   return ('model-' + [IO.Path]::GetFileNameWithoutExtension($Name))
 }

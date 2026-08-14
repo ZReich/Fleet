@@ -21,6 +21,7 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 . (Join-Path $PSScriptRoot 'RunLease.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'FleetLaneRefusal.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'FleetReviewVoice.Helpers.ps1')
+. (Join-Path $PSScriptRoot 'FleetFailoverClassify.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'Test-FleetLaneSpanRecord.ps1')
 
 $script:AllowTransport = @('Invoke-Grok45', 'Invoke-Opus48', 'Invoke-PiGlm', 'Invoke-KimiK3', 'Invoke-Sol')
@@ -59,38 +60,6 @@ function Quote-Arg([string]$Token) {
 }
 function Get-VoiceKey([string]$VoiceOrModel) {
   return (Get-VoiceModelKey $VoiceOrModel)
-}
-function Test-CompletedNegative([string]$Body, [int]$ExitCode) {
-  if ($ExitCode -ne 0) { return $false }
-  $msg = Get-FleetLaneResponseText -Raw $Body
-  if ([string]::IsNullOrWhiteSpace($msg)) { return $false }
-  if ($msg -match '(?i)\bVERDICT:\s*(BLOCK|NEEDS-FIX)\b') { return $true }
-  if (Test-FleetLaneHasFindingWithEvidence -Text $msg) {
-    if ($msg -match '(?i)\bVERDICT:\s*(CLEAR|APPROVE|PASS|WATCH)\b') { return $false }
-    if (Test-FleetLaneHasNoFindings -Text $msg) { return $false }
-    return $true
-  }
-  return $false
-}
-function Get-ParentKind($Rec, [string]$ResultBody) {
-  $oc = [string]$Rec.outcome
-  $ex = 0; try { $ex = [int]$Rec.exit_code } catch { $ex = 0 }
-  if ($oc -ceq 'refused') { return 'refusal' }
-  if ($oc -ceq 'completed') {
-    if (Test-CompletedNegative $ResultBody $ex) { return 'negative' }
-    $sec = ([string]$Rec.review_role -ceq 'security-review') -or ([string]$Rec.review_profile -match 'security')
-    $rf = Test-FleetLaneRefusal -Result $ResultBody -ExitCode $ex -IsSecuritySensitive $sec
-    if ($rf.refused) { return 'refusal' }
-    return 'negative'  # completed success/non-refusal is never a failover trigger
-  }
-  if ($oc -ceq 'failed') { return 'transport' }
-  if ($ex -ne 0) {
-    $sec = ([string]$Rec.review_role -ceq 'security-review')
-    $rf = Test-FleetLaneRefusal -Result $ResultBody -ExitCode $ex -IsSecuritySensitive $sec
-    if ($rf.refused) { return 'refusal' }
-    return 'transport'
-  }
-  return 'ineligible'
 }
 function Read-PlanRows([string]$Path) {
   if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { Fail ("FailoverPlan missing: {0}" -f $Path) }

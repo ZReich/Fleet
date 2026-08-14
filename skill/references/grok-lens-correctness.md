@@ -1,4 +1,4 @@
-# Grok lens template — CORRECTNESS (`[GROK 4.5 · CORRECTNESS]`)
+# Grok lens template — CORRECTNESS (`[GROK 4.6 · CORRECTNESS]`)
 
 One of the three FULL-review Grok fan-out lenses (review-protocol.md charter 5). The
 orchestrator copies this into `.fleet/T1-grok-correctness.txt` and appends the frozen

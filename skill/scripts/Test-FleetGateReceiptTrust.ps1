@@ -25,14 +25,14 @@ $wrongSecret = [byte[]](100..131)
 function New-GateReceipt([int]$ExitCode, [string]$Outcome, [string]$ResultSha) {
   [ordered]@{
     schema_version = '2'; receipt_type = 'merge_stage'; run_id = 'demo-run'; task_id = 'task-1'; lane_id = 'grok-lane-1'
-    stage = 'build-typecheck'; required = $true; status = 'passed'; requested_model = 'grok-4.5'; observed_model = 'grok-4.5'
+    stage = 'build-typecheck'; required = $true; status = 'passed'; requested_model = 'grok-4.6'; observed_model = 'grok-4.6'
     model_evidence = 'unified-log'; effort = 'high'; input_packet_sha256 = ('b' * 64); emitter_id = 'grok-emitter'
     locked_plan_sha256 = ('c' * 64); stage_set_sha256 = ('d' * 64); review_tier = 'STANDARD'; review_profile = 'standard'
     charter_path = 'C:\tmp\charter.md'; result_path = 'C:\tmp\gate-result.txt'; result_sha256 = $ResultSha; charter_sha256 = ('e' * 64)
     exit_code = $ExitCode; outcome = $Outcome; fallback_of = $null; failure_category = $null
     findings = [object[]]@(); evidence_refs = [string[]]@('gate:psvalid'); output_artifacts = [string[]]@()
     started_at = '2026-08-08T00:00:00.0000000Z'; completed_at = '2026-08-08T00:00:10.0000000Z'
-    model = 'grok-4.5'; sig_alg = 'HMAC-SHA256'
+    model = 'grok-4.6'; sig_alg = 'HMAC-SHA256'
   }
 }
 function Get-TextSha([string]$s) {

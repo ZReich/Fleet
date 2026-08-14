@@ -176,9 +176,9 @@ if ($MyInvocation.InvocationName -ne '.') {
   function New-ValidSpan {
     [pscustomobject][ordered]@{
       schema_version = '1'; run_id = 'run-1'; lane_id = 'W1/T1'; phase = 'impl'
-      'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.5'
-      'gen_ai.provider.name' = 'xai'; 'gen_ai.request.model' = 'grok-4.5'
-      'gen_ai.response.model' = 'grok-4.5'; 'gen_ai.usage.input_tokens' = 100
+      'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.6'
+      'gen_ai.provider.name' = 'xai'; 'gen_ai.request.model' = 'grok-4.6'
+      'gen_ai.response.model' = 'grok-4.6'; 'gen_ai.usage.input_tokens' = 100
       'gen_ai.usage.output_tokens' = 50; 'gen_ai.usage.cache_read.input_tokens' = 10
       tool_calls = 2; inference_calls = 1; duration_s = 10.5; first_result_s = 1.2
       status = 'ok'; 'error.type' = $null

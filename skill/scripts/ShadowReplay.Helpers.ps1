@@ -36,7 +36,7 @@ $allowedWrappers = @(
 )
 $script:ShadowDefaultModels = @{
   terra = 'gpt-5.6-terra'; sol = 'gpt-5.6-sol'; luna = 'gpt-5.6-luna'
-  grok = 'grok-4.5'; glm = 'glm-5.2'; opus = 'claude-opus-4-8'
+  grok = 'grok-4.6'; glm = 'glm-5.3'; opus = 'claude-opus-4-8'
   kimi = 'kimi-code/k3'; gemini = 'Gemini 3.6 Flash (Low)'
 }
 $script:ShadowWrapperCaps = @{

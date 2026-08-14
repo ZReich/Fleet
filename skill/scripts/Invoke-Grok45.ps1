@@ -1,4 +1,4 @@
-# Canonical Fleet Grok 4.5 transport. All Fleet Grok launches route here.
+# Canonical Fleet Grok 4.6 transport. All Fleet Grok launches route here.
 # Heartbeat transport (audit fix 2026-08-03): heartbeats are appended as JSONL lines
 # to a SIDECAR file (default <temp>\fleet-grok-heartbeat-<pid>.jsonl, override via
 # -HeartbeatPath), never written to stdout/stderr. This is what previously polluted
@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$ExpectedModel = "grok-4.5"
+$ExpectedModel = "grok-4.6"
 $proc = $null
 $ownedPrompt = $null
 $ownedProbePrompt = $null
@@ -68,7 +68,7 @@ $compatEnvNames = @(
   "GROK_CODEX_SKILLS_ENABLED", "GROK_CODEX_RULES_ENABLED", "GROK_CODEX_AGENTS_ENABLED", "GROK_CODEX_MCPS_ENABLED", "GROK_CODEX_HOOKS_ENABLED"
 )
 $fleetTerseOutputTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
-$fleetSystemPrompt = "You are Grok 4.5, Fleet's first-class non-design worker. Follow the locked charter. Read any tracked source, test, config, caller, or dependency needed for correctness; edit only allowed paths. Choose private implementation details inside locked behavior. Apply Ponytail directly: make the smallest correct change; delete or reuse before adding; prefer installed dependencies and existing utilities; add no abstraction, file, or dependency unless the locked charter requires it. File-size discipline (bands, matching Assert-FleetFileSize): target ~250 lines; 300 is a SOFT WARN - prefer splitting along existing boundaries but it is not a hard stop; 400 is the HARD CAP - never create or grow a source file past 400 lines, split first; a file already over 400 gets only minimal in-place edits, never net growth, unless the locked charter explicitly orders otherwise (test files: 400 warn / 600 cap). Do not over-split to chase 250 - a cohesive 320-line file beats three fragmented ones. Stop only for unresolved UX, product, public API, cross-service architecture, or security-policy decisions. Never commit, stage, push, merge, access secrets, or cause external side effects. Run task-relevant checks. Evidence integrity: report what each check ACTUALLY exercised (tests collected and passed, files scanned, records processed) - a check that ran nothing is a failure, not a pass; never derive a test's expected value from the code under test; never let a mock stand in for the behavior being verified; a new test is unproven until you have seen it fail with the code broken. One requested structured self-review replaces nested review workflows. Return required JSON with observed evidence only."
+$fleetSystemPrompt = "You are Grok 4.6, Fleet's first-class non-design worker. Follow the locked charter. Read any tracked source, test, config, caller, or dependency needed for correctness; edit only allowed paths. Choose private implementation details inside locked behavior. Apply Ponytail directly: make the smallest correct change; delete or reuse before adding; prefer installed dependencies and existing utilities; add no abstraction, file, or dependency unless the locked charter requires it. File-size discipline (bands, matching Assert-FleetFileSize): target ~250 lines; 300 is a SOFT WARN - prefer splitting along existing boundaries but it is not a hard stop; 400 is the HARD CAP - never create or grow a source file past 400 lines, split first; a file already over 400 gets only minimal in-place edits, never net growth, unless the locked charter explicitly orders otherwise (test files: 400 warn / 600 cap). Do not over-split to chase 250 - a cohesive 320-line file beats three fragmented ones. Stop only for unresolved UX, product, public API, cross-service architecture, or security-policy decisions. Never commit, stage, push, merge, access secrets, or cause external side effects. Run task-relevant checks. Evidence integrity: report what each check ACTUALLY exercised (tests collected and passed, files scanned, records processed) - a check that ran nothing is a failure, not a pass; never derive a test's expected value from the code under test; never let a mock stand in for the behavior being verified; a new test is unproven until you have seen it fail with the code broken. One requested structured self-review replaces nested review workflows. Return required JSON with observed evidence only."
 # Space not newline: --system-prompt-override rides Windows argv; raw newlines drop trailing flags.
 $fleetSystemPrompt = $fleetSystemPrompt + " " + $fleetTerseOutputTrailer
 $windowsShellGuidance = " Runtime is Windows PowerShell 5.1. Never use Bash heredocs such as << or python - <<. Never use node -e, node --eval, or python -c for source-file writes. Use search_replace for source edits; do not rewrite whole source files through inline shell quoting or create helper scripts/temp source files."
@@ -536,7 +536,7 @@ function Write-Heartbeat {
   # Sidecar-file transport only (never stdout/stderr): a caller capturing stdout or
   # merging 2>&1 must never see a heartbeat line ahead of/inside the result JSON.
   param([double]$Elapsed)
-  $line = (([ordered]@{ type = "heartbeat"; lane = "grok-4.5"; elapsed_seconds = [math]::Round($Elapsed, 1) }) | ConvertTo-Json -Compress)
+  $line = (([ordered]@{ type = "heartbeat"; lane = "grok-4.6"; elapsed_seconds = [math]::Round($Elapsed, 1) }) | ConvertTo-Json -Compress)
   try { [IO.File]::AppendAllText($script:heartbeatPath, $line + "`n", (New-Object Text.UTF8Encoding($false))) } catch { }
 }
 
@@ -737,9 +737,13 @@ try {
   if ($bashCapable -and -not $Review) { $tools += ",run_terminal_cmd,task,get_task_output,kill_task" }
   elseif ($EnableSubagents -and -not $Review) { $tools += ",task,get_task_output,kill_task" }
   if ($EnableWebSearch) { $tools += ",web_search,web_fetch" }
-  # Grok CLI 0.2.99 accepts high/medium/low only. Fleet's `max` contract means
-  # highest available effort, so preserve it in telemetry while passing `high`.
-  $effectiveEffort = if ($Effort -in @("xhigh", "max")) { "high" } else { $Effort }
+  # Grok 4.6 adds `xhigh` (max reasoning depth; 4.6-only). Pass it through only on
+  # grok-4.6; on any other model `xhigh` is rejected/treated as high, and `max` is not
+  # a Grok level, so both collapse to `high` (telemetry keeps the requested value).
+  $effectiveEffort =
+    if ($Effort -eq "xhigh" -and $ExpectedModel -eq "grok-4.6") { "xhigh" }
+    elseif ($Effort -in @("xhigh", "max")) { "high" }
+    else { $Effort }
   $args = @("-m", $ExpectedModel, "--effort", $effectiveEffort, "--sandbox", "strict", "--verbatim", "--output-format", "json")
   # Worker-JSON schema is implementation-only; read-only review keeps outer JSON transport without --json-schema (D2).
   if (-not $Review) { $args += @("--json-schema", $schemaJson) }

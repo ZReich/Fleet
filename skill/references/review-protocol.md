@@ -94,7 +94,7 @@ launch. Sol/Terra are Codex lanes and run outside this wrapper cap as before.
    `-Thinking high` for STANDARD and FULL (the 900s budget absorbs it and the evidence
    says the marginal tokens buy the top score); `-Thinking low` only for LIGHT. Keep the
    `cli-pinned-unobserved` identity caveat.
-5. Grok 4.5 high (`high` is the effective ceiling — the CLI dropped xhigh/max and the
+5. Grok 4.6 high (`high` is the effective ceiling — the CLI dropped xhigh/max and the
    wrapper collapses both to high; benchmark rows record `high`):
    a full-strength adversarial voice (75.5->94 once freed from the
    worker-JSON harness — see the Harness Law). Grok is the fastest and cheapest lane on
@@ -106,8 +106,8 @@ launch. Sol/Terra are Codex lanes and run outside this wrapper cap as before.
    referenced scripts/files READ-ONLY when the packet references executable behavior (two
    of Grok's best v3 catches — the tier-gate coercion and the auto-shadow stub — required
    reading on-disk code a frozen-packet-only voice cannot see); keep frozen-packet-only
-   for pure-diff reviews. `[GROK 4.5 · SPEC]`, `[GROK 4.5 · CORRECTNESS]`,
-   `[GROK 4.5 · REGRESSION]` label the three lanes. Each lane's prompt is built by copying
+   for pure-diff reviews. `[GROK 4.6 · SPEC]`, `[GROK 4.6 · CORRECTNESS]`,
+   `[GROK 4.6 · REGRESSION]` label the three lanes. Each lane's prompt is built by copying
    its checked-in lens template — [grok-lens-spec.md](grok-lens-spec.md),
    [grok-lens-correctness.md](grok-lens-correctness.md),
    [grok-lens-regression.md](grok-lens-regression.md) — into `.fleet/T1-grok-<lens>.txt`

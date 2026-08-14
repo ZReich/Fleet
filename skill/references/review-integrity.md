@@ -22,6 +22,7 @@ Deterministic signals live in `scripts/FleetLaneRefusal.Helpers.ps1`. Reason enu
 | `content_filter:trusted_access` | Trusted-access content filter |
 | `policy_decline` | Explicit policy refusal |
 | `capability_decline` | Model declines for capability |
+| `hosted_refusal_soft` | Security-review lane SOFTENED: completed shape + generic security hedge + zero exploit-path depth. Detected ONLY on lanes whose signed `review_role` is `security-review` (`scripts/FleetLaneSoftening.Helpers.ps1`); role, NOT profile — a general-role lane under a security-sensitive profile is never soft-flagged, and neither is any general review. |
 | `security_empty_verdict` | Security lane returned empty verdict after filter |
 
 **Not a refusal:**
@@ -149,10 +150,16 @@ review_profile: general|security-sensitive
 When `review_profile: security-sensitive`:
 
 1. Tier **MUST** be **FULL**.
-2. Panel **MUST** include **>=1 open-weights security voice IDENTITY**:
-   - `v-glm-security` or `v-kimi-security` (required forms)
-   - `v-grok-security` acceptable **backup** only
-3. Generic `v-glm` / `v-kimi` / `v-kimi-proxy` do **not** satisfy.
+2. Panel **MUST** include **>=1 security voice IDENTITY** from
+   `{v-glm-security, v-kimi-security, v-grok-security}` (all three dispatch by default
+   on FULL security since owner 2026-08-14 — `v-grok-security` is a default voice, no
+   longer backup-only). Prefer at least one open-weights identity (`v-glm-security` /
+   `v-kimi-security`) present; `v-grok-security` alone satisfies the >=1 gate when both
+   open-weights voices are down.
+3. Generic `v-glm` / `v-kimi` / `v-kimi-proxy` / `v-grok` do **not** satisfy.
+4. A hosted security lane returning hedged/generalized output missing charter-required
+   exploit-path detail is `hosted_refusal_soft` — treated as `refused` for failover
+   (re-dispatch slice to Grok 4.6), never a silent pass.
 
 Enforced by `scripts/Assert-FleetAdversarialReview.ps1`. Sensitive-review trigger
 and `review_profile` selection: [mode-selection.md](mode-selection.md).

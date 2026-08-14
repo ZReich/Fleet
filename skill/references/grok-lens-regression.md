@@ -1,4 +1,4 @@
-# Grok lens template — REGRESSION (`[GROK 4.5 · REGRESSION]`)
+# Grok lens template — REGRESSION (`[GROK 4.6 · REGRESSION]`)
 
 One of the three FULL-review Grok fan-out lenses (review-protocol.md charter 5). The
 orchestrator copies this into `.fleet/T1-grok-regression.txt` and appends the frozen packet

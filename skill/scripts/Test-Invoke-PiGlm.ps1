@@ -68,7 +68,7 @@ if ($env:FAKE_PI_ARGS -notmatch '(^|\s)-p(\s|$)' -or $env:FAKE_PI_ARGS -match '-
   [Console]::Error.WriteLine("bad fake pi args: $($env:FAKE_PI_ARGS)")
   exit 7
 }
-if ($env:FAKE_PI_ARGS -notmatch '(?:^|\s)--provider\s+zai(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--model\s+glm-5\.2(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-session(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-extensions(?:\s|$)') { exit 7 }
+if ($env:FAKE_PI_ARGS -notmatch '(?:^|\s)--provider\s+zai(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--model\s+glm-5.3(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-session(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-extensions(?:\s|$)') { exit 7 }
 if ($env:FAKE_PI_ARGS -match '(?:^|\s)--tools(?:\s|$)') {
   if ($env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-approve(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--no-extensions(?:\s|$)' -or $env:FAKE_PI_ARGS -notmatch '(?:^|\s)--tools\s+read,grep,find,ls(?:\s|$)' -or $env:FAKE_PI_ARGS -match '(?:^|\s)--approve(?:\s|$)') { exit 7 }
 }
@@ -254,7 +254,7 @@ Assert-True ($r.ExitCode -eq 0) "json mode exit 0"
 $jsonOk = $false
 try {
   $obj = $r.StdOut.Trim() | ConvertFrom-Json
-  $jsonOk = ($obj.status -eq "ok" -and $obj.response -eq "FAKE_OK" -and $obj.model -eq "glm-5.2" -and $obj.provider -eq "zai")
+  $jsonOk = ($obj.status -eq "ok" -and $obj.response -eq "FAKE_OK" -and $obj.model -eq "glm-5.3" -and $obj.provider -eq "zai")
 } catch { $jsonOk = $false }
 Assert-True $jsonOk "json normalized result fields"
 
@@ -371,15 +371,32 @@ try {
 Assert-True $nvmOk "inactive NVM Pi fallback resolves without switching active Node"
 
 # 17) No-tools frozen review packet is embedded over stdin with manifest evidence.
-$artifactRoot = Join-Path ([IO.Path]::GetTempPath()) ("fleet-pi-artifact-" + [guid]::NewGuid().ToString("n"))
-New-Item -ItemType Directory -Path $artifactRoot | Out-Null
+# Fixture rebuilt 2026-08-14: this section had rotted behind Get-FleetReviewPacket (bare
+# "# Plan" has no review_profile; a %TEMP% dir is not a Git repo; the preflight pair is
+# required) and threw before ever reaching the wrapper. Same recipe as Test-Get-FleetReviewPacket.
+$packetRepo = Join-Path ([IO.Path]::GetTempPath()) ("fleet-pi-artifact-" + [guid]::NewGuid().ToString("n"))
+$artifactRoot = Join-Path $packetRepo "packet"
+New-Item -ItemType Directory -Path $artifactRoot -Force | Out-Null
 try {
+  & git -C $packetRepo init -q 2>$null | Out-Null
+  [IO.File]::WriteAllText((Join-Path $packetRepo "a.txt"), "anchored source`n")
   [IO.File]::WriteAllText((Join-Path $artifactRoot "base.sha"), (("a" * 40) + [Environment]::NewLine))
   [IO.File]::WriteAllText((Join-Path $artifactRoot "final.diff"), "PI_FROZEN_ARTIFACT_TOKEN")
   [IO.File]::WriteAllText((Join-Path $artifactRoot "touched-files.txt"), "a.txt`n")
-  [IO.File]::WriteAllText((Join-Path $artifactRoot "locked-plan.md"), "# Plan`n")
+  [IO.File]::WriteAllText((Join-Path $artifactRoot "locked-plan.md"), "# Plan`nreview_profile: general`n")
   [IO.File]::WriteAllText((Join-Path $artifactRoot "acceptance-evidence.md"), "# Evidence`n")
   [IO.File]::WriteAllText((Join-Path $artifactRoot "gate-evidence.md"), "# Gates`n")
+  $svRunId = "pi-packet-test"
+  [IO.File]::WriteAllText((Join-Path $artifactRoot "selected-voices.json"), (([ordered]@{
+    schema_version = "1"; run_id = $svRunId
+    selected = @([ordered]@{ lane_id = "v-sol"; voice = "sol"; probe_profile = "plan" })
+  } | ConvertTo-Json -Depth 5 -Compress) + "`n"))
+  [IO.File]::WriteAllText((Join-Path $artifactRoot "review-preflight.json"), (([ordered]@{
+    schema_version = "1"; run_id = $svRunId; status = "READY"
+    status_line = "review-preflight: READY | selected: 1 | passed: 1 | cached: 0 | failed: 0"
+    selected = 1; passed = 1; cached = 0; failed = 0
+    voices = @([ordered]@{ lane_id = "v-sol"; voice = "sol"; probe_profile = "plan"; result = "pass"; cache_hit = $false })
+  } | ConvertTo-Json -Depth 5 -Compress) + "`n"))
   $packetManifest = Join-Path $artifactRoot "packet-manifest.json"
   $packetBuilder = Join-Path $PSScriptRoot "Get-FleetReviewPacket.ps1"
   $packet = (& $packetBuilder -PacketDir $artifactRoot -OutputPath $packetManifest | ConvertFrom-Json)
@@ -390,11 +407,11 @@ try {
   $artifactOk = $false
   try {
     $obj = $r.StdOut.Trim() | ConvertFrom-Json
-    $artifactOk = ($r.ExitCode -eq 0 -and $obj.packet_manifest_sha256 -eq $packet.packet_sha256 -and @($obj.artifacts).Count -eq 6 -and $obj.artifacts[0].bytes -gt 0 -and $obj.artifacts[0].sha256.Length -eq 64)
+    $artifactOk = ($r.ExitCode -eq 0 -and $obj.packet_manifest_sha256 -eq $packet.packet_sha256 -and @($obj.artifacts).Count -eq 8 -and $obj.artifacts[0].bytes -gt 0 -and $obj.artifacts[0].sha256.Length -eq 64)
   } catch { $artifactOk = $false }
   Assert-True $artifactOk "frozen packet embedded, re-attested, and hashed for no-tools GLM"
 }
-finally { Remove-Item -LiteralPath $artifactRoot -Recurse -Force -ErrorAction SilentlyContinue }
+finally { Remove-Item -LiteralPath $packetRepo -Recurse -Force -ErrorAction SilentlyContinue }
 
 # L321c: GLM must be pinnable to a worktree and record which tree it read (source-shape
 # guard -- the resolve/warn path needs a live Pi to exercise, so lock the fix in source).
@@ -436,7 +453,7 @@ if ($Live) {
     $stdout2 = Get-Content -LiteralPath $outFile -Raw
     $obj2 = $null
     try { $obj2 = $stdout2.Trim() | ConvertFrom-Json } catch {}
-    Assert-True ($p2.ExitCode -eq 0 -and $null -ne $obj2 -and $obj2.response -match "PI_JSON_OK" -and $obj2.model -eq "glm-5.2" -and $obj2.provider -eq "zai" -and $obj2.model_evidence -eq "cli-pinned-unobserved" -and -not $obj2.model_verified) "live json configured model proof"
+    Assert-True ($p2.ExitCode -eq 0 -and $null -ne $obj2 -and $obj2.response -match "PI_JSON_OK" -and $obj2.model -eq "glm-5.3" -and $obj2.provider -eq "zai" -and $obj2.model_evidence -eq "cli-pinned-unobserved" -and -not $obj2.model_verified) "live json configured model proof"
 
     $leftover = @(Get-Process -Name "node" -ErrorAction SilentlyContinue | Where-Object {
       try { $_.MainModule.FileName -match "pi-coding-agent" } catch { $false }

@@ -264,7 +264,7 @@ try {
     $paths = Write-ReviewPacket -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -VoiceBodies (Get-FullFiveBodies) -VoiceNames (Get-FullFiveNames -Glm 'v-glm-security.md')
     New-Item -ItemType Directory -Force -Path $s.ReceiptDir | Out-Null
     $p = $paths | Where-Object { $_ -like '*glm-security*' } | Select-Object -First 1
-    $bad = @{ schema_version = '1'; lane_id = 'v-glm-security'; requested_model = 'glm-5.2'; result_path = $p; result_sha256 = (Get-FileSha $p) }
+    $bad = @{ schema_version = '1'; lane_id = 'v-glm-security'; requested_model = 'glm-5.3'; result_path = $p; result_sha256 = (Get-FileSha $p) }
     [IO.File]::WriteAllText((Join-Path $s.ReceiptDir 'unsigned.json'), ($bad | ConvertTo-Json -Compress), $utf8)
     $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
     Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'signature|FAILED|verdict: FAILED') "r3-unsigned: $($run.Raw)"

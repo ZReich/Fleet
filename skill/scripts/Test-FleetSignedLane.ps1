@@ -39,7 +39,7 @@ function New-GrokStub([string]$Observed) {
   return @"
 param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text', [switch]`$Review, [string]`$Effort='', [int]`$TimeoutSeconds=0)
 `$reviewFlags = "review=`$Review effort=`$Effort timeout=`$TimeoutSeconds"
-`$r=[ordered]@{status='ok';model='grok-4.5';observed_model='$obsLit';model_evidence='unified-log';response=('VERDICT: CLEAR none material ' + `$reviewFlags);exit_code=0}
+`$r=[ordered]@{status='ok';model='grok-4.6';observed_model='$obsLit';model_evidence='unified-log';response=('VERDICT: CLEAR none material ' + `$reviewFlags);exit_code=0}
 if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
 exit 0
 "@
@@ -49,7 +49,7 @@ function New-SnapshotSwapAttemptGrokStub() {
 param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text', [switch]`$Review, [string]`$Effort='', [int]`$TimeoutSeconds=0)
 `$blocked = `$false
 try { [IO.File]::WriteAllText(`$PromptFile, 'SWAPPED-BY-TRANSPORT') } catch { `$blocked = `$true }
-`$r=[ordered]@{status='ok';model='grok-4.5';observed_model='grok-4.5';model_evidence='unified-log';response=('VERDICT: CLEAR swap_write_blocked=' + `$blocked);exit_code=0}
+`$r=[ordered]@{status='ok';model='grok-4.6';observed_model='grok-4.6';model_evidence='unified-log';response=('VERDICT: CLEAR swap_write_blocked=' + `$blocked);exit_code=0}
 if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
 exit 0
 "@
@@ -77,11 +77,11 @@ function Enter-Lease([string]$RunId) {
 function Exit-Lease([string]$RunId) {
   $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $script:ExitLease -RunId $RunId 2>$null
 }
-function New-CommonArgs([string]$RunId, [string]$ScriptsRoot, [string]$ReceiptPath, [string]$CharterPath, [string]$Extra = '') {
+function New-CommonArgs([string]$RunId, [string]$ScriptsRoot, [string]$ReceiptPath, [string]$CharterPath, [string]$Extra = '', [string]$ReviewRole = 'general-review', [string]$LaneId = 'v-grok', [string]$VoiceId = 'v-grok') {
   $pkt = Get-FixedSha 'pkt'; $man = Get-FixedSha 'man'; $plan = Get-FixedSha 'plan'
   $a = (@(
     '-RunId', $RunId, '-Transport', 'Invoke-Grok45', '-TaskId', 'T3',
-    '-LaneId', 'v-grok', '-VoiceId', 'v-grok', '-ReviewRole', 'general-review',
+    '-LaneId', $LaneId, '-VoiceId', $VoiceId, '-ReviewRole', $ReviewRole,
     '-CharterPath', ('"' + $CharterPath + '"'),
     '-InputPacketSha256', $pkt, '-LockedPlanSha256', $plan, '-ExpectedLaneManifestSha256', $man,
     '-ReviewProfile', 'standard', '-ReviewTier', 'STANDARD',
@@ -90,6 +90,16 @@ function New-CommonArgs([string]$RunId, [string]$ScriptsRoot, [string]$ReceiptPa
   ) -join ' ')
   if (-not [string]::IsNullOrEmpty($Extra)) { $a = $a + ' ' + $Extra }
   return $a
+}
+# Softened security review: completed shape + generic hedge, zero exploit depth => refused.
+function New-SoftSecurityGrokStub {
+  return @"
+param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text', [switch]`$Review, [string]`$Effort='', [int]`$TimeoutSeconds=0)
+`$body = "VERDICT: NEEDS-FIX`nFINDINGS:`n- HIGH | F001 | src/upload.ts:3 | input handling is weak; consider validating user input and follow security best practices"
+`$r=[ordered]@{status='ok';model='grok-4.6';observed_model='grok-4.6';model_evidence='unified-log';response=`$body;exit_code=0}
+if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
+exit 0
+"@
 }
 function Assert-SigOk($rec, [string]$RunId) {
   $key = Get-FleetRunLeaseKey -RunId $RunId
@@ -109,7 +119,7 @@ try {
     $runId = 'sl-happy'; Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-happy'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'happy.receipt.json'
     $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter)
     Assert-True ($cap.Code -eq 0) ("shim exit $($cap.Code) err=$($cap.Err)")
@@ -118,10 +128,46 @@ try {
     Assert-SigOk $rec $runId
     Assert-True ($rec.outcome -ceq 'completed') 'expected completed'
     Assert-True ($rec.emitter_id -ceq 'Invoke-FleetSignedLane') 'emitter'
-    Assert-True ($rec.requested_model -ceq 'grok-4.5' -and $rec.observed_model -ceq 'grok-4.5') 'models'
+    Assert-True ($rec.requested_model -ceq 'grok-4.6' -and $rec.observed_model -ceq 'grok-4.6') 'models'
     Assert-True ($rec.model_evidence -ceq 'observed-provider:grok-unified-log') 'evidence'
     $result = Get-Content -LiteralPath ([string]$rec.result_path) -Raw -Encoding UTF8
     Assert-True ($result -match 'review=True effort=high timeout=900') 'Grok review transport tokens missing'
+    Exit-Lease $runId
+  }
+
+  Case 'security-review soft body => outcome refused (hosted_refusal_soft)' {
+    # Integration lock (adversarial follow-up B): a softened security review is marked
+    # refused AT SOURCE, so the failover engine (Get-ParentKind: outcome=refused=>refusal)
+    # dispatches for it instead of stranding it as completed-negative.
+    $runId = 'sl-soft-sec'; Enter-Lease $runId
+    $scripts = Join-Path $work 'scripts-soft-sec'
+    New-Item -ItemType Directory -Force -Path $scripts | Out-Null
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-SoftSecurityGrokStub)
+    $receiptPath = Join-Path $work 'soft-sec.receipt.json'
+    # A non-completed outcome (refused) still WRITES the signed receipt and exits 1.
+    $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter '' 'security-review' 'v-grok-security' 'v-grok-security')
+    Assert-True ($cap.Code -eq 1) ("expected exit 1 on refused; got $($cap.Code) err=$($cap.Err)")
+    Assert-True (Test-Path -LiteralPath $receiptPath) 'receipt missing on refused'
+    $rec = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($rec.outcome -ceq 'refused') ("expected refused; got $($rec.outcome)")
+    Assert-True ([string]$rec.refusal_reason -ceq 'hosted_refusal_soft') ("expected hosted_refusal_soft; got $($rec.refusal_reason)")
+    Assert-SigOk $rec $runId
+    Exit-Lease $runId
+  }
+
+  Case 'general-review same soft body => stays completed (never soft-flagged)' {
+    # Integration lock: the identical hedge body under general-review role is NOT soft —
+    # the general-review storm/deadlock stays closed.
+    $runId = 'sl-soft-gen'; Enter-Lease $runId
+    $scripts = Join-Path $work 'scripts-soft-gen'
+    New-Item -ItemType Directory -Force -Path $scripts | Out-Null
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-SoftSecurityGrokStub)
+    $receiptPath = Join-Path $work 'soft-gen.receipt.json'
+    $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter)
+    Assert-True ($cap.Code -eq 0) ("shim exit $($cap.Code) err=$($cap.Err)")
+    $rec = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    Assert-True ($rec.outcome -ceq 'completed') ("expected completed; got $($rec.outcome)")
+    Assert-SigOk $rec $runId
     Exit-Lease $runId
   }
 
@@ -132,7 +178,7 @@ try {
     New-FakeTransport $scripts 'Invoke-Grok45' @"
 param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text', [switch]`$Review, [string]`$Effort='', [int]`$TimeoutSeconds=0)
 `$snapshot = [IO.File]::ReadAllText(`$PromptFile)
-`$r=[ordered]@{status='ok';model='grok-4.5';observed_model='grok-4.5';model_evidence='unified-log';response=('VERDICT: CLEAR snapshot_read_bytes=' + `$snapshot.Length);exit_code=0}
+`$r=[ordered]@{status='ok';model='grok-4.6';observed_model='grok-4.6';model_evidence='unified-log';response=('VERDICT: CLEAR snapshot_read_bytes=' + `$snapshot.Length);exit_code=0}
 if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
 exit 0
 "@
@@ -172,7 +218,7 @@ exit 0
     $runId = 'sl-snapshot-reparse'; Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-snapshot-reparse'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $reparseReceiptDir = Join-Path $work 'snapshot-reparse-receipts'
     $outside = Join-Path $work 'snapshot-reparse-outside'
     New-Item -ItemType Directory -Force -Path $reparseReceiptDir, $outside | Out-Null
@@ -193,7 +239,7 @@ exit 0
     $runId = 'sl-override'; Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-ov'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'override.receipt.json'
     $extra = '-RequestedModel evil-model -ObservedModel evil-obs -ModelEvidence forged -EmitterId forged-emitter'
     $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter $extra)
@@ -201,7 +247,7 @@ exit 0
     $rec = Get-Content -LiteralPath $receiptPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Assert-True ($rec.requested_model -cne 'evil-model' -and $rec.observed_model -cne 'evil-obs') 'override models'
     Assert-True ($rec.model_evidence -cne 'forged' -and $rec.emitter_id -cne 'forged-emitter') 'override meta'
-    Assert-True ($rec.requested_model -ceq 'grok-4.5' -and $rec.observed_model -ceq 'grok-4.5') 'derived models'
+    Assert-True ($rec.requested_model -ceq 'grok-4.6' -and $rec.observed_model -ceq 'grok-4.6') 'derived models'
     Assert-True ($rec.model_evidence -ceq 'observed-provider:grok-unified-log' -and $rec.emitter_id -ceq 'Invoke-FleetSignedLane') 'derived meta'
     Exit-Lease $runId
   }
@@ -220,7 +266,7 @@ exit 0
     Assert-True ($rec.outcome -cne 'completed') ("outcome completed; got $($rec.outcome)")
     Assert-True ($rec.outcome -ceq 'failed') ("expected failed; got $($rec.outcome)")
     Assert-True ($rec.observed_model -ceq 'not-the-requested-model') 'obs actual'
-    Assert-True ($rec.requested_model -ceq 'grok-4.5') 'req derived'
+    Assert-True ($rec.requested_model -ceq 'grok-4.6') 'req derived'
     Assert-SigOk $rec $runId
     Exit-Lease $runId
   }
@@ -229,7 +275,7 @@ exit 0
     $runId = 'sl-mutate'; Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-mut'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'mutate.receipt.json'
     $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter)
     Assert-True ($cap.Code -eq 0) ("shim exit $($cap.Code)")
@@ -261,7 +307,7 @@ exit 0
     $runId = 'sl-cleanup-no-lease'
     $scripts = Join-Path $work 'scripts-cleanup'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'cleanup.receipt.json'
     $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter)
     Assert-True ($cap.Code -ne 0) 'missing lease should fail before receipt'
@@ -299,7 +345,7 @@ exit 0
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
     $piBody = @"
 param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text')
-`$r=[ordered]@{status='ok';model='glm-5.2';model_evidence='cli-pinned-unobserved';response='VERDICT: CLEAR none material';exit_code=0}
+`$r=[ordered]@{status='ok';model='glm-5.3';model_evidence='cli-pinned-unobserved';response='VERDICT: CLEAR none material';exit_code=0}
 if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
 exit 0
 "@
@@ -330,7 +376,7 @@ exit 0
     $runId = 'sl-fbof'; Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-fb'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'fbof.receipt.json'
     $extra = '-FallbackOf v-sol-security'
     $cap = Invoke-ShimCapture (New-CommonArgs $runId $scripts $receiptPath $charter $extra)
@@ -349,7 +395,7 @@ exit 0
     $runId = ('sl-vbind-' + [guid]::NewGuid().ToString('n').Substring(0, 8)); Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-vbind'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $receiptPath = Join-Path $work 'vbind.receipt.json'
     $pkt = Get-FixedSha 'pkt-vb'; $man = Get-FixedSha 'man-vb'; $plan = Get-FixedSha 'plan-vb'
     $argLine = (@(
@@ -372,7 +418,7 @@ exit 0
     $runId = ('sl-path-' + [guid]::NewGuid().ToString('n').Substring(0, 8)); Enter-Lease $runId
     $scripts = Join-Path $work 'scripts-path'
     New-Item -ItemType Directory -Force -Path $scripts | Out-Null
-    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.5')
+    New-FakeTransport $scripts 'Invoke-Grok45' (New-GrokStub 'grok-4.6')
     $sibling = Join-Path $work 'sibling-prefix-escape'
     New-Item -ItemType Directory -Force -Path $sibling | Out-Null
     $receiptPath = Join-Path $work 'path.receipt.json'

@@ -133,7 +133,7 @@ try {
   $glmPrompt = Join-Path $root "glm.txt"
   [IO.File]::WriteAllText($grokPrompt, @"
 Review this literal transport packet in free-form Markdown; no repository file or executable check is required.
-Packet: wrapper=Invoke-Grok45.ps1; requested_model=grok-4.5; expected_mode=markdown-review; mutation_allowed=false.
+Packet: wrapper=Invoke-Grok45.ps1; requested_model=grok-4.6; expected_mode=markdown-review; mutation_allowed=false.
 Write a short review stating the packet is readable and list no blockers.
 "@, (New-Object Text.UTF8Encoding($false)))
   [IO.File]::WriteAllText($opusPrompt, "Reply exactly OPUS_OK", (New-Object Text.UTF8Encoding($false)))
@@ -143,8 +143,8 @@ Write a short review stating the packet is readable and list no blockers.
     -PromptFile $grokPrompt -Effort low -Review -Mode json -TimeoutSeconds 90 -HeartbeatSeconds 120
   $grok = $null
   try { $grok = $grokRaw | ConvertFrom-Json } catch { }
-  $grokOk = $LASTEXITCODE -eq 0 -and $grok.status -eq "ok" -and $grok.lane -eq "read_only" -and $grok.self_audit_required -eq $false -and $grok.self_audit_verified -eq $false -and $null -eq $grok.audit -and -not [string]::IsNullOrWhiteSpace([string]$grok.response) -and $grok.observed_model -eq "grok-4.5"
-  Check $grokOk "Grok 4.5 wrapper"
+  $grokOk = $LASTEXITCODE -eq 0 -and $grok.status -eq "ok" -and $grok.lane -eq "read_only" -and $grok.self_audit_required -eq $false -and $grok.self_audit_verified -eq $false -and $null -eq $grok.audit -and -not [string]::IsNullOrWhiteSpace([string]$grok.response) -and $grok.observed_model -eq "grok-4.6"
+  Check $grokOk "Grok 4.6 wrapper"
   if (-not $grokOk -and $grok) { Write-Host ("  Grok detail: " + ($grok | ConvertTo-Json -Compress -Depth 8)) }
 
   if ($RequireKimi) {
@@ -166,7 +166,7 @@ Write a short review stating the packet is readable and list no blockers.
   try { $grokImpl = $grokImplRaw | ConvertFrom-Json } catch { }
   $implBody = if (Test-Path -LiteralPath $implProbeFile) { [IO.File]::ReadAllText($implProbeFile).Trim() } else { "" }
   $grokImplOk = $LASTEXITCODE -eq 0 -and $grokImpl.status -eq "ok" -and $grokImpl.self_audit_verified -and $grokImpl.audit.audit_passes -ge 1 -and $implBody -eq "FLEET_WRITE_OK"
-  Check $grokImplOk "Grok 4.5 implementation tools and self-audit"
+  Check $grokImplOk "Grok 4.6 implementation tools and self-audit"
   if (-not $grokImplOk -and $grokImpl) { Write-Host ("  Grok implementation detail: " + ($grokImpl | ConvertTo-Json -Compress -Depth 8)) }
   }
 
@@ -186,8 +186,8 @@ Write a short review stating the packet is readable and list no blockers.
     -PromptFile $glmPrompt -Thinking off -NoTools -Mode json -TimeoutSeconds 120 -HeartbeatSeconds 120
   $glm = $null
   try { $glm = $glmRaw | ConvertFrom-Json } catch { }
-  $glmOk = $LASTEXITCODE -eq 0 -and $glm.status -eq "ok" -and $glm.response.Trim() -eq "GLM_OK" -and $glm.model -eq "glm-5.2" -and $glm.provider -eq "zai"
-  Check $glmOk "GLM 5.2 via Pi wrapper" ([bool]$RequireGlm)
+  $glmOk = $LASTEXITCODE -eq 0 -and $glm.status -eq "ok" -and $glm.response.Trim() -eq "GLM_OK" -and $glm.model -eq "glm-5.3" -and $glm.provider -eq "zai"
+  Check $glmOk "GLM 5.3 via Pi wrapper" ([bool]$RequireGlm)
   if (-not $glmOk -and $glm) { Write-Host ("  GLM detail: " + ($glm | ConvertTo-Json -Compress -Depth 5)) }
 
   if ($RequireGemini -or $ImagePath) {

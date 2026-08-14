@@ -1,6 +1,6 @@
 ---
 name: fleet
-description: Claude Code adapter for Fleet — an opinionated way to build and research with your whole model fleet as one team (planner, implementer, supervisor, and a blind cross-family review panel) so no model grades its own work. Maps the canonical Codex Fleet contract onto Claude: Sol plans and verifies, Terra supervises, Grok implements, Spark/Kimi/Gemini gather evidence, and risk-scaled adversarial review can't be skipped.
+description: Claude Code adapter for Fleet — an opinionated way to build and research with your whole model fleet as one team (planner, implementer, supervisor, and a blind cross-family review panel) so no model grades its own work. Maps the canonical Codex Fleet contract onto Claude: Grok 4.6 plans, implements, and owns architecture/non-UI design; Fable/Opus 5 own UI design; Sol verifies; Terra supervises; risk-scaled adversarial review can't be skipped.
 ---
 
 # Fleet Adapter for Claude Code
@@ -16,13 +16,19 @@ Fable/Opus/four-voice drift.
 
 ## Claude Surface Mapping
 
-- Sol writes the locked plan and returns for blind final verification/arbitration.
-  Sol PLANS, it does not explore (owner-codified 2026-08-12): the plan dispatch carries
-  a pre-assembled brief (`.fleet/context.md` — files + line refs, helpers, gate
-  commands, constraints, acceptance criteria) built by the Claude orchestrator or a
-  Spark lane first; effort `high` default, `xhigh` only for ambiguous/high-impact
-  designs. The planning lane is the run's critical-path head — every minute Sol spends
-  self-gathering context is serial wall-clock.
+- Grok 4.6 writes the locked plan (owner adoption 2026-08-14, per the canonical
+  SKILL.md planner-swap section) and locks architecture/non-UI design itself; UI
+  design locks come from the Fable orchestrator inline (or an Opus 5 lane), and a
+  FRESH Sol session does blind final verification/arbitration — cross-family, since
+  Grok now plans AND implements. Big new features: Sol shadow on Grok's design/arch
+  lock + Fable design review before build. The planner does not explore
+  (owner-codified 2026-08-12): the plan dispatch carries a pre-assembled brief
+  (`.fleet/context.md` — files + line refs, helpers, gate commands, constraints,
+  acceptance criteria) built by the Claude orchestrator or a Spark lane first; effort
+  `high` default, `xhigh` only for ambiguous/high-impact plans. The planning lane is
+  the run's critical-path head — every minute the planner spends self-gathering
+  context is serial wall-clock. No plan-lane shadow (owner 2026-08-14): Grok plans
+  solo; re-pair only on owner request or suspected planner regression.
 - NO standing Terra supervisor lane on this surface (owner-codified 2026-08-12): the
   Claude root orchestrator IS the main loop and supervises directly — dispatch,
   liveness, integration, gates, and repair routing. A Terra supervisor here duplicates
@@ -31,8 +37,10 @@ Fable/Opus/four-voice drift.
   Terra keeps three jobs on Claude: failure-fallback implementer when Grok fails,
   blind panel voice, and architect/devil's-advocate lane. The orchestrator still owns
   every gate — supervising directly never waives the Fallow/psvalid/lane-span duties.
-- Claude root relays status and invokes lanes; it does not replace Sol's design or
-  arbitration authority.
+- Claude root relays status and invokes lanes; it does not replace Grok's
+  architecture authority or Sol's arbitration/final-verdict authority. Exception:
+  UI design — the Fable root IS the UI-design owner on this surface and may lock
+  UI decisions inline (owner 2026-08-14).
 - Opus is review-only through the canonical wrapper. Never make Opus supervisor.
 - Grok self-check on this surface (owner-codified 2026-08-12): the mandatory part is
   the SELF-RUN DETERMINISTIC GATES — Grok executes psvalid/its own tests on its slice
@@ -41,7 +49,7 @@ Fable/Opus/four-voice drift.
   criteria. Do NOT charter a freeform adversarial self-review essay: Grok's
   self-assessment was refuted twice in trustchain while adding lane latency; the
   blind panel owns adversarial judgment.
-- Grok 4.5 owns non-design implementation. Never give Grok design judgment (but a
+- Grok 4.6 owns non-design implementation. Never give Grok design judgment (but a
   private/internal signature within the locked contract is Grok's to choose). Grok
   implementation lanes in an isolated worktree get subagents + web default-on.
 - HARNESS LAW: review/analysis/research/critique lanes always produce free-form
@@ -54,7 +62,7 @@ Fable/Opus/four-voice drift.
 - Kimi default: visually-important UI, FULL first-party security (copy-sandbox only),
   long-horizon packets, broad read-only research. Sol keeps security/final judgment;
   static deny / no host-repo writes / no final authority.
-- Security FULL: TWO open-weights voices by default — `[GLM 5.2 · SECURITY]` LIVE
+- Security FULL: TWO open-weights voices by default — `[GLM 5.3 · SECURITY]` LIVE
   read-only (`Invoke-PiGlm.ps1 -ReadOnly -Thinking high`); `[KIMI K3 · SECURITY]`
   COPY-SANDBOX (`Invoke-KimiK3.ps1 -RepoSandbox <repo>`; embed only if no git). Concurrent;
   findings additive once verified; Sol final; first-party only. See references/kimi-k3.md.
@@ -67,7 +75,7 @@ Fable/Opus/four-voice drift.
 - Use model-first task names: `[MODEL · ROLE] T# — action`. External lanes run as
   background Bash dispatches and the Bash `description` IS the only lane label the owner
   sees, so every dispatch description MUST start with the `[MODEL · ROLE]` prefix (e.g.
-  `[GROK 4.5 · IMPL] T3 — build sanitizer`). Friendly prose ("Dispatch Sol plan") is a
+  `[GROK 4.6 · IMPL] T3 — build sanitizer`). Friendly prose ("Dispatch Sol plan") is a
   contract violation (caught live 07-22). Preserve the prefix through retries.
 - Fleet worktrees follow the Codex contract's location rule
   (`%USERPROFILE%\.codex\worktrees\<repo-slug>\...` or session scratchpad — never
@@ -208,6 +216,20 @@ parallel write race (4 concurrent Sol lanes proven skew-free; shared cache untou
 via raw `codex exec` should set `CODEX_HOME` the same way. Accepts `-PromptFile` (like
 Invoke-Grok45/Opus48) so Sol dispatches from the Bash tool without the `(Get-Content -Raw …)` parens
 the Bash tool chokes on. codex is a tracked CLI-audit runtime.
+
+### Grok-shadows-Sol replacement benchmark (default ON, owner-directed 2026-08-12)
+
+When Claude orchestrates a run, pair EVERY Sol lane (wave-graph plan, PLAN-mode ratify,
+design/API/architecture lock, non-mechanical arbitration, final plan-coverage verdict) with a
+concurrent read-only `[GROK 4.6 · SOL-SHADOW]` lane on the SAME frozen brief Sol got —
+`Invoke-Grok45.ps1 -PromptFile <sol-brief> -Review -WorkingDirectory <repo> -Mode json` (read-only
+Grok CAN read the tree; `-NoTools` cannot), prompt prefixed `SHADOW_COVERED:<run>/<lane>`. Grok's
+output is RECORDED, never shipped; Sol still owns and ships. Record each pair to
+`BENCH-shadow.jsonl` with `coverage_scope=sol_replacement` and the lane `genre`; end of run read
+`shadow:sol_replacement` from `Get-FleetLaneFit.ps1` (`?` below 30 rows — accumulates across runs,
+not a one-run verdict). The FULL panel already seats Grok as an independent voice, so Sol's review
+is already covered — no separate review shadow. Full policy: source `SKILL.md` → "Grok-shadows-Sol
+replacement benchmark". Adoption stays an explicit owner call, never auto-promotion.
 
 ## Kimi K3
 

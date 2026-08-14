@@ -56,7 +56,7 @@ function Exit-Lease([string]$RunId) {
 function New-FakeTransport {
   param(
     [string]$Dir, [string]$Name, [string]$Response, [int]$ExitCode = 0,
-    [string]$Model = 'grok-4.5', [string]$Observed = 'grok-4.5', [string]$Evidence = 'unified-log'
+    [string]$Model = 'grok-4.6', [string]$Observed = 'grok-4.6', [string]$Evidence = 'unified-log'
   )
   $respLit = $Response.Replace("'", "''")
   $modLit = $Model.Replace("'", "''"); $obsLit = $Observed.Replace("'", "''"); $evLit = $Evidence.Replace("'", "''")
@@ -72,10 +72,10 @@ function New-FakeKimi([string]$Dir, [string]$Response, [int]$ExitCode = 0) {
   return (New-FakeTransport $Dir 'Invoke-KimiK3' $Response $ExitCode 'kimi-code/k3' 'unobserved' 'requested-cli-argument+isolated-config')
 }
 function New-FakeGlm([string]$Dir, [string]$Response, [int]$ExitCode = 0) {
-  return (New-FakeTransport $Dir 'Invoke-PiGlm' $Response $ExitCode 'glm-5.2' 'unobserved' 'cli-pinned-unobserved')
+  return (New-FakeTransport $Dir 'Invoke-PiGlm' $Response $ExitCode 'glm-5.3' 'unobserved' 'cli-pinned-unobserved')
 }
 function New-FakeGrok([string]$Dir, [string]$Response, [int]$ExitCode = 0) {
-  return (New-FakeTransport $Dir 'Invoke-Grok45' $Response $ExitCode 'grok-4.5' 'grok-4.5' 'unified-log')
+  return (New-FakeTransport $Dir 'Invoke-Grok45' $Response $ExitCode 'grok-4.6' 'grok-4.6' 'unified-log')
 }
 function New-DualKimiGlm([string]$Dir, [string]$KimiResponse, [string]$GlmResponse) {
   New-FakeKimi $Dir $KimiResponse | Out-Null
@@ -509,7 +509,7 @@ try {
     $fakeBody = @"
 param([string]`$Prompt='', [string]`$PromptFile='', [ValidateSet('text','json')][string]`$Mode='text')
 [IO.File]::WriteAllText('$charLit', "# charter``nMUTATED DURING DISPATCH")
-`$r=[ordered]@{status='ok';model='glm-5.2';observed_model='unobserved';model_evidence='cli-pinned-unobserved';response='$respLit';exit_code=0}
+`$r=[ordered]@{status='ok';model='glm-5.3';observed_model='unobserved';model_evidence='cli-pinned-unobserved';response='$respLit';exit_code=0}
 if(`$Mode -eq 'json'){Write-Output (`$r|ConvertTo-Json -Compress)} else {Write-Output `$r.response}
 exit 0
 "@

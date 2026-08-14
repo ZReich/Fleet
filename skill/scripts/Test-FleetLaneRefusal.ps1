@@ -187,13 +187,211 @@ VERDICT: BLOCK
     ExpectRefused = $true
     ExpectReason = 'policy_decline'
   }
+  # --- hosted_refusal_soft (softened security review; owner directive 2026-08-14) ---
+  # Softening fires ONLY when DetectSoftening=$true (genuine security review).
+  @{
+    Name = 'soft-generic-validate'
+    Result = @"
+## Findings
+- HIGH: consider validating user input across the surface.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $true
+    ExpectReason = 'hosted_refusal_soft'
+  }
+  @{
+    # Production charter grammar (FINDINGS: / VERDICT: NO-GO), softened.
+    Name = 'soft-canonical-grammar-hedge'
+    Result = @"
+VERDICT: NO-GO
+FINDINGS:
+- HIGH | F001 | src/auth.ts:22 | input handling is weak; ensure proper input validation and follow security best practices
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $true
+    ExpectReason = 'hosted_refusal_soft'
+  }
+  @{
+    Name = 'soft-fileline-hedge'
+    Result = @"
+## Findings
+- scripts/foo.ps1:12 HIGH - consider validating user input
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $true
+    ExpectReason = 'hosted_refusal_soft'
+  }
+  @{
+    # FN closed: attacker-can with no exploitation verb no longer buys depth.
+    Name = 'soft-attacker-can-theoretically'
+    Result = @"
+## Findings
+- HIGH: consider validating user input across the surface. An attacker can theoretically cause issues if validation is weak.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $true
+    ExpectReason = 'hosted_refusal_soft'
+  }
+  @{
+    Name = 'real-sqli-chain-not-soft'
+    Result = @"
+## Findings
+- scripts/Query.ps1:44 HIGH - SQL injection: attacker-controlled `$Filter reaches Invoke-Sqlcmd via string concat; payload ' OR 1=1-- dumps dbo.Users.
+VERDICT: BLOCK
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    Name = 'real-authz-attacker-can-not-soft'
+    Result = @"
+## Findings
+- scripts/Grant.ps1:88 CRITICAL - unauthenticated admin endpoint; an attacker can execute Grant-Admin with no session cookie (authz-bypass).
+VERDICT: NO-GO
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    Name = 'real-cwe-id-not-soft'
+    Result = @"
+## Findings
+- lib/state.py:88 CRITICAL - insecure deserialization (CWE-502): pickle.loads on attacker-controlled session blob, gadget chain to RCE.
+VERDICT: BLOCK
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    # Real finding, class OUTSIDE the depth lexicon, NO hedge => never soft (require-hedge
+    # rule; adversarial HIGH-3: secrets/DoS findings must not be flagged).
+    Name = 'real-secret-no-hedge-not-soft'
+    Result = @"
+VERDICT: BLOCK
+FINDINGS:
+- CRITICAL | F001 | config/prod.env:4 | plaintext AWS keys committed; rotate and move to a secrets vault
+- MEDIUM | F002 | src/ratelimit.go:9 | limiter admits unbounded bursts from any IP
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    Name = 'clean-no-findings-not-soft'
+    Result = @"
+## Findings
+- none material
+VERDICT: CLEAR
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    # Production clean grammar: FINDINGS: none with an earlier prose bullet must not be soft.
+    Name = 'clean-canonical-findings-none-not-soft'
+    Result = @"
+Checked the auth surface end to end.
+- reviewed session handling
+VERDICT: GO
+FINDINGS: none
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    # CRITICAL fix: general review in canonical grammar is NEVER soft-flagged
+    # (DetectSoftening=$false), even though IsSecuritySensitive is $true at the integrity gate.
+    Name = 'general-canonical-review-not-soft'
+    Result = @"
+VERDICT: NO-GO
+FINDINGS:
+- HIGH | F001 | src/cache.ts:40 | race on cache write; add a lock
+- MEDIUM | F002 | src/util.ts:9 | naming inconsistency, could be improved
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $false
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    Name = 'soft-ignored-when-not-detecting'
+    Result = @"
+## Findings
+- HIGH: consider validating user input across the surface.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $false
+    DetectSoftening = $false
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    # WATCH-1 closed: a real authn finding phrased "must be authenticated" is NOT a hedge
+    # (authenticated/authorized dropped from the modal marker) => real finding, not soft.
+    Name = 'real-jwt-authn-finding-not-soft'
+    Result = @"
+VERDICT: BLOCK
+FINDINGS:
+- CRITICAL | F001 | src/jwt.ts:14 | alg=none accepted; tokens must be authenticated with RS256, current code trusts the header alg
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $false
+    ExpectReason = $null
+  }
+  @{
+    # WATCH-2 closed: an unanchored "no issues with X" mid-body must NOT launder a hedged
+    # review clean; the hedge still makes it soft.
+    Name = 'soft-unanchored-no-issues-still-soft'
+    Result = @"
+Consider validating user input on the upload path. There are no issues with the limiter itself.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    IsSecuritySensitive = $true
+    DetectSoftening = $true
+    ExpectRefused = $true
+    ExpectReason = 'hosted_refusal_soft'
+  }
 )
 
 $total = $cases.Count
 $i = 0
 foreach ($c in $cases) {
   $i++
-  $got = Test-FleetLaneRefusal -Result $c.Result -ExitCode $c.ExitCode -IsSecuritySensitive $c.IsSecuritySensitive
+  $detectSoft = [bool]$c.DetectSoftening
+  $got = Test-FleetLaneRefusal -Result $c.Result -ExitCode $c.ExitCode -IsSecuritySensitive $c.IsSecuritySensitive -DetectSoftening $detectSoft
   $refusedOk = ($got.refused -eq $c.ExpectRefused)
   $reasonOk = $false
   if ($null -eq $c.ExpectReason) {
@@ -230,12 +428,35 @@ $failoverCases = @(
     ExitCode = 1
     ExpectEligible = $false
   }
+  @{
+    Name = 'failover-soft-security-ineligible'
+    Result = @"
+## Findings
+- HIGH: consider validating user input across the surface.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    DetectSoftening = $true
+    ExpectEligible = $false
+  }
+  @{
+    Name = 'failover-soft-general-still-eligible'
+    Result = @"
+## Findings
+- HIGH: consider validating user input across the surface.
+VERDICT: NEEDS-FIX
+"@
+    ExitCode = 0
+    DetectSoftening = $false
+    ExpectEligible = $true
+  }
 )
 
 foreach ($fc in $failoverCases) {
   $i++
   $total++
-  $gotEligible = Test-FailoverEligible -ResultText $fc.Result -ExitCode $fc.ExitCode
+  $detectFlag = [bool]$fc.DetectSoftening
+  $gotEligible = Test-FailoverEligible -ResultText $fc.Result -ExitCode $fc.ExitCode -DetectSoftening $detectFlag
   if ($gotEligible -ne $fc.ExpectEligible) {
     Write-Host ("selftest: FAIL {0}/{1} case={2} got={{eligible={3}}} expected={{eligible={4}}}" -f $i, $total, $fc.Name, $gotEligible, $fc.ExpectEligible)
     exit 1

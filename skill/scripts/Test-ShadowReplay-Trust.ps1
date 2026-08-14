@@ -46,7 +46,7 @@ index 0000000..1111111
 @@ -0,0 +1 @@
 +patched-ok
 "@
-  @{status='ok';task_status='done';lane=$LaneId;patch=$patch;observed_model='glm-5.2'} | ConvertTo-Json -Compress
+  @{status='ok';task_status='done';lane=$LaneId;patch=$patch;observed_model='glm-5.3'} | ConvertTo-Json -Compress
   exit 0
 }
 if ($ReadOnly -and $m -eq 'patch_bad') {
@@ -59,7 +59,7 @@ index 0000000..1111111
 @@ -0,0 +1 @@
 +leak
 "@
-  @{status='ok';task_status='done';lane=$LaneId;patch=$patch;model='glm-5.2';response=$patch} | ConvertTo-Json -Compress
+  @{status='ok';task_status='done';lane=$LaneId;patch=$patch;model='glm-5.3';response=$patch} | ConvertTo-Json -Compress
   exit 0
 }
 $content = 'ok-content'
@@ -112,7 +112,7 @@ try {
   New-FakeWrapper $fakeSol; New-FakeWrapper $fakeGrok; New-FakeWrapper $fakeGlm
   $fake = $fakeGrok
   $laneSpec = Join-Path $temp 'lane-spec.json'
-  Write-Json $laneSpec @{ wrappers = @{ terra = $fakeSol; grok = $fakeGrok }; models = @{ terra = 'gpt-5.6-terra'; grok = 'grok-4.5' } }
+  Write-Json $laneSpec @{ wrappers = @{ terra = $fakeSol; grok = $fakeGrok }; models = @{ terra = 'gpt-5.6-terra'; grok = 'grok-4.6' } }
   $specJson = (New-TaskSpec | ConvertTo-Json -Compress -Depth 6)
 
   Case 'B1 allowlist reject: unknown basename' {
@@ -168,7 +168,7 @@ try {
   Case 'B3 patch seat happy path + bad-scope excluded_capability' {
     $fx = Join-Path $temp 'b3'; $q = Join-Path $fx 'q'; New-Item -ItemType Directory -Force -Path $q | Out-Null
     $ls = Join-Path $fx 'lane.json'
-    Write-Json $ls @{ wrappers = @{ terra = $fakeSol; grok = $fakeGlm }; models = @{ terra = 'gpt-5.6-terra'; grok = 'glm-5.2' } }
+    Write-Json $ls @{ wrappers = @{ terra = $fakeSol; grok = $fakeGlm }; models = @{ terra = 'gpt-5.6-terra'; grok = 'glm-5.3' } }
     # Happy path: patch applies to result.txt
     $r = EnqSpec @{ RunId='rB3h'; TaskId='t-b3h'; TaskStratum='standard'; BaseSha=$baseSha; Seed='sB3h'; Challenger='grok'; QueueRoot=$q; Force=$true; TaskSpecJson=$specJson; PrimaryLane='terra'; PrimaryWallSeconds='4' }
     $env:FAKE_SHADOW_MODE = 'patch_ok'

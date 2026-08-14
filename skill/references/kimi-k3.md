@@ -126,7 +126,7 @@ Repo visibility differs between the two voices BY DESIGN — this is the crux, b
 diff-only packet is too thin for a real vuln hunt (cross-file taint→sink flow lives
 outside any one diff):
 
-- `[GLM 5.2 · SECURITY]` runs LIVE read-only against the real checkout via
+- `[GLM 5.3 · SECURITY]` runs LIVE read-only against the real checkout via
   `Invoke-PiGlm.ps1 -ReadOnly -Thinking high` (Pi grants `read,grep,find,ls`;
   edit/bash/approve denied). GLM crawls the whole tree itself, greps for sinks, and
   chases data flow across files on demand. No embed limit. This is the deep-dive lane.
@@ -151,7 +151,7 @@ additive-findings and Sol-final-verdict rules apply to both; neither grades othe
 models.
 
 Rules:
-- Both `[KIMI K3 · SECURITY]` and `[GLM 5.2 · SECURITY]` dispatch BY DEFAULT alongside
+- Both `[KIMI K3 · SECURITY]` and `[GLM 5.3 · SECURITY]` dispatch BY DEFAULT alongside
   the review panel whenever a security trigger selects FULL tier; optional on explicit
   request at lower tiers.
 - K3's security lane MUST see the whole repo: repo copy-sandbox by default, LONG-HORIZON

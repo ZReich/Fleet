@@ -14,7 +14,7 @@ param([string]$PromptFile,[string]$WorkingDirectory,[string]$BashCapability,[swi
 $prompt = [IO.File]::ReadAllText($PromptFile)
 if ($Mode -ne 'json' -or $prompt -notmatch '^SHADOW_COVERED:') { exit 42 }
 [IO.File]::WriteAllText((Join-Path $WorkingDirectory "result.txt"), "from-write-arm`n")
-$obs = if ($env:FAKE_ARM_A_MODEL) { $env:FAKE_ARM_A_MODEL } else { "grok-4.5" }
+$obs = if ($env:FAKE_ARM_A_MODEL) { $env:FAKE_ARM_A_MODEL } else { "grok-4.6" }
 @{status="ok";task_status="done";observed_model=$obs;model_evidence="fake"} | ConvertTo-Json -Compress
 '@)
   # Fake patch-transport wrappers — REAL canonical shape: model + response (diff inside response), not observed_model+patch.
@@ -22,7 +22,7 @@ $obs = if ($env:FAKE_ARM_A_MODEL) { $env:FAKE_ARM_A_MODEL } else { "grok-4.5" }
 param([string]$PromptFile,[string]$Mode,[int]$TimeoutSeconds,[string]$Thinking,[switch]$ReadOnly)
 $prompt = [IO.File]::ReadAllText($PromptFile)
 if ($Mode -ne 'json' -or $prompt -notmatch '^SHADOW_COVERED:') { exit 42 }
-$model = if ($env:FAKE_PATCH_MODEL) { $env:FAKE_PATCH_MODEL } else { "glm-5.2" }
+$model = if ($env:FAKE_PATCH_MODEL) { $env:FAKE_PATCH_MODEL } else { "glm-5.3" }
 $mode = $env:FAKE_PATCH_MODE
 if ($mode -eq "bad-model") { $model = "wrong-model" }
 $patch = if ($mode -eq "bad-scope") {
@@ -52,9 +52,9 @@ diff --git a/result.txt b/result.txt
 @{status="ok";task_status="done";model=$model;model_evidence="fake";response=$patch} | ConvertTo-Json -Compress
 '@
   [IO.File]::WriteAllText((Join-Path $scripts "Invoke-PiGlm.ps1"), $patchBody)
-  [IO.File]::WriteAllText((Join-Path $scripts "Invoke-KimiK3.ps1"), $patchBody.Replace('glm-5.2','kimi-code/k3').Replace('FAKE_PATCH_MODEL','FAKE_K3_MODEL').Replace('FAKE_PATCH_MODE','FAKE_K3_MODE'))
+  [IO.File]::WriteAllText((Join-Path $scripts "Invoke-KimiK3.ps1"), $patchBody.Replace('glm-5.3','kimi-code/k3').Replace('FAKE_PATCH_MODEL','FAKE_K3_MODEL').Replace('FAKE_PATCH_MODE','FAKE_K3_MODE'))
 
-  function New-V2Tasks([string]$ModeA = "", [string]$ModeB = "", [string]$ModelA = "grok-4.5", [string]$ModelB = "glm-5.2") {
+  function New-V2Tasks([string]$ModeA = "", [string]$ModeB = "", [string]$ModelA = "grok-4.6", [string]$ModelB = "glm-5.3") {
     return @{ tasks = @(
       @{ id="pair1"; prompt="Bounded pair one."; allowed_paths=@("result.txt"); max_diff_lines=20; gate_commands=@('if (-not (Test-Path result.txt)) { exit 1 }')
         lane_a=@{name="arm_a";wrapper="Invoke-Grok45.ps1";model=$ModelA;effort="high"}
@@ -85,8 +85,8 @@ diff --git a/result.txt b/result.txt
     if ($result.estimand -ne "optimized_system") { throw "wrapper_pair result missing estimand=optimized_system got=$($result.estimand)" }
     if ($result.arm_a.run.transport_status -ne "ok") { throw "arm_a transport not ok: $($result.arm_a.run.transport_status)" }
     if ($result.arm_b.run.transport_status -ne "ok") { throw "arm_b transport not ok" }
-    if ($result.arm_a.run.requested_model -ne "grok-4.5" -or $result.arm_b.run.requested_model -ne "glm-5.2") { throw "requested model pin missing" }
-    if ($result.arm_a.run.observed_model -ne "grok-4.5" -or $result.arm_b.run.observed_model -ne "glm-5.2") { throw "observed model missing (must accept model field)" }
+    if ($result.arm_a.run.requested_model -ne "grok-4.6" -or $result.arm_b.run.requested_model -ne "glm-5.3") { throw "requested model pin missing" }
+    if ($result.arm_a.run.observed_model -ne "grok-4.6" -or $result.arm_b.run.observed_model -ne "glm-5.3") { throw "observed model missing (must accept model field)" }
     if ($result.arm_a.artifacts.status -ne "eligible" -or $result.arm_b.artifacts.status -ne "eligible") { throw "arms not eligible: a=$($result.arm_a.artifacts.status) b=$($result.arm_b.artifacts.status)" }
     $diffB = Get-Content (Join-Path $out "private\$($result.task_id)\arm_b.diff") -Raw
     if ($diffB -notmatch 'from-patch-arm') { throw "patch content missing from arm_b diff (response-embedded diff)" }
@@ -112,7 +112,7 @@ diff --git a/result.txt b/result.txt
   if ($br.arm_b.run.transport_status -ne "error") { throw "model mismatch must be transport error" }
   if ($br.arm_b.artifacts.status -eq "eligible" -and $br.arm_b.run.transport_status -eq "ok") { throw "mismatch must not be gradeable ok" }
   $bp = Get-Content (Join-Path $badOut "blind\pair1\packet.json") -Raw | ConvertFrom-Json
-  $badCand = @($bp.candidate_a, $bp.candidate_b) | Where-Object { $_.requested_model -eq "glm-5.2" } | Select-Object -First 1
+  $badCand = @($bp.candidate_a, $bp.candidate_b) | Where-Object { $_.requested_model -eq "glm-5.3" } | Select-Object -First 1
   if ($badCand.adoption_status -eq "eligible") { throw "mismatch arm must not be adoption-eligible" }
   Write-Output "PASS observed-model mismatch => transport error, never a grade"
   $env:FAKE_PATCH_MODE = ""

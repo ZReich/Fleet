@@ -17,8 +17,8 @@ function New-ValidSpan {
   param([string]$LaneId, [string]$Status = 'ok', [string]$Rid = $RunId)
   [pscustomobject][ordered]@{
     schema_version = '1'; run_id = $Rid; lane_id = $LaneId; phase = 'impl'
-    'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.5'
-    'gen_ai.provider.name' = 'xai'; 'gen_ai.request.model' = 'grok-4.5'
+    'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.6'
+    'gen_ai.provider.name' = 'xai'; 'gen_ai.request.model' = 'grok-4.6'
     'gen_ai.response.model' = $null; 'gen_ai.usage.input_tokens' = $null
     'gen_ai.usage.output_tokens' = $null; 'gen_ai.usage.cache_read.input_tokens' = $null
     tool_calls = 1; inference_calls = 1; duration_s = 10.0; first_result_s = 1.0

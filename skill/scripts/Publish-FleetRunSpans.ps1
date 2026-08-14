@@ -105,8 +105,8 @@ if ($SelfTest) {
     function W-Span([string]$Lane) {
       $rec = [ordered]@{
         schema_version = '1'; run_id = 'st-run'; lane_id = $Lane; phase = 'impl'
-        'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.5'; 'gen_ai.provider.name' = 'xai'
-        'gen_ai.request.model' = 'grok-4.5'; 'gen_ai.response.model' = $null
+        'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.6'; 'gen_ai.provider.name' = 'xai'
+        'gen_ai.request.model' = 'grok-4.6'; 'gen_ai.response.model' = $null
         'gen_ai.usage.input_tokens' = $null; 'gen_ai.usage.output_tokens' = $null; 'gen_ai.usage.cache_read.input_tokens' = $null
         tool_calls = 0; inference_calls = 1; duration_s = 60.0; first_result_s = 1.5
         status = 'ok'; 'error.type' = $null; handoff = $null; artifacts = @()

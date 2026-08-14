@@ -185,14 +185,14 @@ $cases = @(
       $br = New-ResultFile $d 'glm-ok' $script:OkBody
       Write-SignedReceipt $d 'glm' (New-Receipt -LaneId 'v-glm-security' -Model 'glm' -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha) } }
   @{ Name='unobservable-unobserved-null-response-ok'; ExpectExit=0; ExpectVerdict='ok'; Build={ param($d)
-      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.2'; S='ok'; RM='__null__' })
-      Write-HostedOk $d 'v-glm-security' 'glm-5.2' 'glm' -Observed 'unobserved' -ModelEvidence 'cli-pinned-unobserved' } }
+      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.3'; S='ok'; RM='__null__' })
+      Write-HostedOk $d 'v-glm-security' 'glm-5.3' 'glm' -Observed 'unobserved' -ModelEvidence 'cli-pinned-unobserved' } }
   @{ Name='unobservable-wrong-observed-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
-      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.2'; S='ok'; RM='__null__' })
-      Write-HostedOk $d 'v-glm-security' 'glm-5.2' 'glm' -Observed 'sol' -ModelEvidence 'cli-pinned-unobserved' } }
+      Write-Prov $d @('v-glm-security') @(@{ L='v-glm-security'; M='glm-5.3'; S='ok'; RM='__null__' })
+      Write-HostedOk $d 'v-glm-security' 'glm-5.3' 'glm' -Observed 'sol' -ModelEvidence 'cli-pinned-unobserved' } }
   @{ Name='observable-unobserved-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
-      Write-Prov $d @('v-grok') @((Sp-Ok 'v-grok' 'grok-4.5'))
-      Write-HostedOk $d 'v-grok' 'grok-4.5' 'grok' -Observed 'unobserved' -ModelEvidence 'unified-log' } }
+      Write-Prov $d @('v-grok') @((Sp-Ok 'v-grok' 'grok-4.6'))
+      Write-HostedOk $d 'v-grok' 'grok-4.6' 'grok' -Observed 'unobserved' -ModelEvidence 'unified-log' } }
   @{ Name='unsigned-receipt-FAILED'; ExpectExit=1; ExpectVerdict='FAILED'; Build={ param($d)
       Write-Prov $d $base1 @((Sp-Ok 'v-sol-security' 'sol')); $br = New-ResultFile $d 'sol' $script:BlockBody
       Write-SignedReceipt $d 'sol' (New-Receipt -LaneId 'v-sol-security' -Model 'sol' -Outcome 'completed' -ResultPath $br.Path -ResultSha $br.Sha) -Unsigned } }

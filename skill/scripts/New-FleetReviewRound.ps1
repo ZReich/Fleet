@@ -145,7 +145,7 @@ if ($SelfTest) {
       $rec = [pscustomobject][ordered]@{
         schema_version = '2'; receipt_type = 'review_lane'; run_id = $script:StRunId; task_id = 't1'
         lane_id = $Lane; voice_id = $Lane; review_role = 'general-review'
-        requested_model = 'grok-4.5'; observed_model = 'grok-4.5'; model_evidence = 'observed-provider:grok-unified-log'
+        requested_model = 'grok-4.6'; observed_model = 'grok-4.6'; model_evidence = 'observed-provider:grok-unified-log'
         emitter_id = 'Invoke-FleetSignedLane'; input_packet_sha256 = $Pkt
         expected_lane_manifest_sha256 = ('c' * 64); locked_plan_sha256 = ('d' * 64); review_profile = 'general'
         charter_path = (Join-Path $tmp 'charter.txt'); review_tier = 'STANDARD'; result_path = $rp

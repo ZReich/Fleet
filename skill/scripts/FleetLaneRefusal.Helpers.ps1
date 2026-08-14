@@ -1,7 +1,12 @@
 # Dot-sourceable refusal detector for Fleet multi-model routing.
 # NO top-level side effects. Callers: . (Join-Path $PSScriptRoot 'FleetLaneRefusal.Helpers.ps1')
 # Contract: Test-FleetLaneRefusal returns { refused = bool; reason = enum-or-null }.
+#   reasons: content_filter:*, policy_decline, capability_decline, hosted_refusal_soft,
+#   security_empty_verdict, transport_error, null.
 # Contract: Test-FailoverEligible returns bool (stricter failover gate).
+
+# Security-softening oracle (Test-FleetLaneHasExploitDepth / Test-FleetLaneSecuritySoftening).
+. (Join-Path $PSScriptRoot 'FleetLaneSoftening.Helpers.ps1')
 
 function ConvertTo-FleetLaneStraightApostrophe {
   param([AllowNull()][string]$Text)
@@ -175,7 +180,14 @@ function Test-FleetLaneRefusal {
   param(
     [AllowNull()][string]$Result,
     [int]$ExitCode = 0,
-    [bool]$IsSecuritySensitive = $false
+    [bool]$IsSecuritySensitive = $false,
+    # Softening detection is OFF by default and gated SEPARATELY from IsSecuritySensitive:
+    # it must run ONLY on lanes whose signed review_role is 'security-review' (role, NOT
+    # profile — a general-role lane under a security-sensitive profile stays off), never on
+    # every hosted completion — a general review in the canonical VERDICT/FINDINGS grammar
+    # must never be classified soft (adversarial-review CRITICAL, Grok+GLM concur
+    # 2026-08-14). IsSecuritySensitive still drives security_empty_verdict.
+    [bool]$DetectSoftening = $false
   )
 
   $message = Get-FleetLaneResponseText -Raw $Result
@@ -203,8 +215,13 @@ function Test-FleetLaneRefusal {
     }
   }
 
-  # Real completed review (after explicit-decline checks) is never a refusal.
+  # Real completed review (after explicit-decline checks) is never a refusal —
+  # UNLESS it is a softened security review: completed SHAPE, zero exploit depth.
+  # This branch replaces the old blind substance short-circuit that was the hole.
   if ($hasSubstance) {
+    if ($DetectSoftening -and ($ExitCode -eq 0) -and (Test-FleetLaneSecuritySoftening -Text $message)) {
+      return (New-FleetLaneRefusalResult -Refused $true -Reason 'hosted_refusal_soft')
+    }
     return (New-FleetLaneRefusalResult -Refused $false -Reason $null)
   }
 
@@ -232,7 +249,11 @@ function Test-FleetLaneRefusal {
 function Test-FailoverEligible {
   param(
     [AllowNull()][string]$ResultText,
-    [int]$ExitCode
+    [int]$ExitCode,
+    # Pass $true ONLY when the failover is for a genuine security review, so a softened
+    # completion cannot itself serve as the failover. Default $false preserves the
+    # general-lane contract. Never pass $true for general reviews (would deadlock the gate).
+    [bool]$DetectSoftening = $false
   )
 
   if ($ExitCode -ne 0) { return $false }
@@ -254,7 +275,7 @@ function Test-FailoverEligible {
     if (-not $hasVerdict) { return $false }
   }
 
-  $refusal = Test-FleetLaneRefusal -Result $ResultText -ExitCode $ExitCode -IsSecuritySensitive $false
+  $refusal = Test-FleetLaneRefusal -Result $ResultText -ExitCode $ExitCode -DetectSoftening $DetectSoftening
   if ($refusal.refused) { return $false }
 
   return $true

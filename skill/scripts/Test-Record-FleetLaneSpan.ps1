@@ -15,7 +15,7 @@ function New-ValidSpan {
   param(
     [string]$RunId = 'run-1',
     [string]$LaneId = 'W1/T1',
-    [object]$ResponseModel = 'grok-4.5',
+    [object]$ResponseModel = 'grok-4.6',
     [object]$InputTokens = 100,
     [object]$OutputTokens = 50,
     [object]$CacheTokens = 10
@@ -26,9 +26,9 @@ function New-ValidSpan {
     lane_id = $LaneId
     phase = 'impl'
     'gen_ai.operation.name' = 'invoke_agent'
-    'gen_ai.agent.name' = 'grok-4.5'
+    'gen_ai.agent.name' = 'grok-4.6'
     'gen_ai.provider.name' = 'xai'
-    'gen_ai.request.model' = 'grok-4.5'
+    'gen_ai.request.model' = 'grok-4.6'
     'gen_ai.response.model' = $ResponseModel
     'gen_ai.usage.input_tokens' = $InputTokens
     'gen_ai.usage.output_tokens' = $OutputTokens
@@ -121,7 +121,7 @@ try {
     $input = Join-Path $temp 'nulls.json'
     $output = Join-Path $temp 'ledger-nulls.jsonl'
     # Raw JSON keeps null keys (ConvertTo-Json can drop them in some PS hosts).
-    $nullJson = '{"schema_version":"1","run_id":"null-run","lane_id":"null-lane","phase":"impl","gen_ai.operation.name":"invoke_agent","gen_ai.agent.name":"grok-4.5","gen_ai.provider.name":"xai","gen_ai.request.model":"grok-4.5","gen_ai.response.model":null,"gen_ai.usage.input_tokens":null,"gen_ai.usage.output_tokens":null,"gen_ai.usage.cache_read.input_tokens":null,"tool_calls":2,"inference_calls":1,"duration_s":10.5,"first_result_s":null,"status":"ok","error.type":null,"handoff":null,"artifacts":[]}'
+    $nullJson = '{"schema_version":"1","run_id":"null-run","lane_id":"null-lane","phase":"impl","gen_ai.operation.name":"invoke_agent","gen_ai.agent.name":"grok-4.6","gen_ai.provider.name":"xai","gen_ai.request.model":"grok-4.6","gen_ai.response.model":null,"gen_ai.usage.input_tokens":null,"gen_ai.usage.output_tokens":null,"gen_ai.usage.cache_read.input_tokens":null,"tool_calls":2,"inference_calls":1,"duration_s":10.5,"first_result_s":null,"status":"ok","error.type":null,"handoff":null,"artifacts":[]}'
     [IO.File]::WriteAllText($input, $nullJson, $utf8)
     $run = Invoke-Recorder $input $output
     Assert-True ($run.ExitCode -eq 0) "null fixture: $($run.Raw)"

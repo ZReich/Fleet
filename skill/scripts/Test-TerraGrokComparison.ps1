@@ -35,9 +35,9 @@ if ($BashCapability -ne "Auto" -or -not $IsolatedWorktree -or -not $LeanSystemPr
 if ($env:FAKE_JUNCTION_TARGET) { $link = Join-Path $WorkingDirectory "node_modules\outside-link"; New-Item -ItemType Directory -Force -Path (Split-Path -Parent $link) | Out-Null; New-Item -ItemType Junction -Path $link -Target $env:FAKE_JUNCTION_TARGET | Out-Null }
 $mode = $env:FAKE_GROK_MODE
 if ($mode -eq "failed") { exit 43 }
-$observed = if ($mode -eq "bad") { "wrong-model" } else { "grok-4.5" }
+$observed = if ($mode -eq "bad") { "wrong-model" } else { "grok-4.6" }
 $taskStatus = if ($mode -eq "bad") { "partial" } else { "done" }
-@{status="ok";task_status=$taskStatus;model="grok-4.5";observed_model=$observed;grok_version="test-0.2.99";model_evidence="unified-log";effective_prompt_sha256=(('a' * 64) -join '');session_id="fake-session"} | ConvertTo-Json -Compress
+@{status="ok";task_status=$taskStatus;model="grok-4.6";observed_model=$observed;grok_version="test-0.2.99";model_evidence="unified-log";effective_prompt_sha256=(('a' * 64) -join '');session_id="fake-session"} | ConvertTo-Json -Compress
 '@)
   $tasks = @{ tasks = @(
     @{ id="bug"; prompt="Fix bounded bug."; allowed_paths=@("result.txt"); max_diff_lines=10; gate_commands=@('if (-not (Test-Path result.txt)) { exit 1 }') },
@@ -53,7 +53,7 @@ $taskStatus = if ($mode -eq "bad") { "partial" } else { "done" }
   if (@($report.results).Count -ne 3) { throw "expected three comparisons" }
   foreach ($result in @($report.results)) {
     if ($result.terra.run.requested_model -ne "gpt-5.6-terra" -or $result.terra.run.requested_effort -ne "medium") { throw "Terra pin missing" }
-    if ($result.grok.run.requested_model -ne "grok-4.5" -or $result.grok.run.requested_effort -ne "high" -or $result.grok.run.observed_model -ne "grok-4.5" -or $result.grok.run.grok_version -ne "test-0.2.99") { throw "Grok proof missing" }
+    if ($result.grok.run.requested_model -ne "grok-4.6" -or $result.grok.run.requested_effort -ne "high" -or $result.grok.run.observed_model -ne "grok-4.6" -or $result.grok.run.grok_version -ne "test-0.2.99") { throw "Grok proof missing" }
     if ($result.terra.artifacts.status -ne "eligible" -or $result.grok.artifacts.status -ne "eligible") { $terraError=Get-Content $result.terra.run.run.stderr -Raw; throw "candidate not score-eligible: terra=$($result.terra.artifacts.status) grok=$($result.grok.artifacts.status) terraTransport=$($result.terra.run.transport_status) terraExit=$($result.terra.run.run.exit_code) terraGate=$($result.terra.artifacts.gates[0].output) terraError=$terraError" }
     $blindTask = Join-Path $out "blind\$($result.task_id)"
     if (-not (Test-Path (Join-Path $blindTask "candidate-a.diff")) -or -not (Test-Path (Join-Path $blindTask "candidate-b.diff"))) { throw "blind artifacts missing" }

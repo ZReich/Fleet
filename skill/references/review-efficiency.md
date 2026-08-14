@@ -121,4 +121,4 @@ Surfaces that cannot render `[MODEL · ROLE] T# — action` (Codex Desktop `task
 authoritative fallback grammar `<model><role>_t<n>_<slug>` — lowercase ASCII,
 `^[a-z][a-z0-9_]*$`, model + role + `t<n>` mandatory, stable slug (collision gets a
 deterministic short-hash suffix). Examples: `gpt56sol_architect_t5_reviewburn`,
-`glm52_review_t3_packetlint`. Rich display labels remain preferred wherever supported.
+`glm53_review_t3_packetlint`. Rich display labels remain preferred wherever supported.

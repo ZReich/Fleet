@@ -20,8 +20,9 @@ Fable/Opus/four-voice drift.
   SKILL.md planner-swap section) and locks architecture/non-UI design itself; UI
   design locks come from the Fable orchestrator inline (or an Opus 5 lane), and a
   FRESH Sol session does blind final verification/arbitration — cross-family, since
-  Grok now plans AND implements. Big new features: Sol shadow on Grok's design/arch
-  lock + Fable design review before build. The planner does not explore
+  Grok now plans AND implements. Big new features: fast Fable design review over Grok's
+  design/arch lock before build — NO Sol shadow (Sol too slow; owner 2026-08-14). The
+  planner does not explore
   (owner-codified 2026-08-12): the plan dispatch carries a pre-assembled brief
   (`.fleet/context.md` — files + line refs, helpers, gate commands, constraints,
   acceptance criteria) built by the Claude orchestrator or a Spark lane first; effort

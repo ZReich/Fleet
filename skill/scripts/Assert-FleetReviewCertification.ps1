@@ -17,7 +17,8 @@ param(
   [string]$GateIntegrity = '',
   [string]$GateSpans = '',
   [string]$GateReview = '',
-  [string]$GateMerge = ''
+  [string]$GateMerge = '',
+  [string]$GatePlan = ''
 )
 $ErrorActionPreference = 'Stop'
 $utf8 = New-Object System.Text.UTF8Encoding $false
@@ -299,6 +300,22 @@ try {
   $gateSpans = Resolve-GatePath $GateSpans 'Assert-FleetLaneSpans.ps1'
   $gateReview = Resolve-GatePath $GateReview 'Assert-FleetAdversarialReview.ps1'
   $gateMerge = Resolve-GatePath $GateMerge 'Assert-FleetMergeReadiness.ps1'
+
+  # 0) plan-parallelism (plan-driven runs only: -LockedPlan present => the gate RUNS here,
+  # never report-honor-system; a wave plan with no plan-graph block or defects>0 is
+  # UNCERTIFIED. Runs without a locked plan (review-only/MICRO) skip this gate.)
+  if (-not [string]::IsNullOrWhiteSpace($LockedPlan)) {
+    $script:RedTot++
+    $gatePlan = Resolve-GatePath $GatePlan 'Assert-FleetPlanParallelism.ps1'
+    $pRes = Invoke-ChildGate $gatePlan @('-PlanPath', $LockedPlan)
+    $script:ChildCodes['plan'] = $pRes.ExitCode
+    $pLine = Get-SummaryLine $pRes.Raw 'plan-parallelism:'
+    if ($null -eq $pLine) { Emit-Uncertified 'reducer' }
+    Write-Output $pLine
+    [void]$script:ReducerLines.Add($pLine)
+    if ($pRes.ExitCode -ne 0) { Emit-Uncertified 'plan' }
+    $script:RedOk++
+  }
 
   # Private effective: integrity produces via -OutputManifest; spans consumes. Caller path ignored.
   $privEff = Join-Path ([IO.Path]::GetTempPath()) ('fleet-cert-eff-' + $script:Rid + '-' + [guid]::NewGuid().ToString('N') + '.json')

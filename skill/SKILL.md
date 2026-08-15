@@ -45,12 +45,14 @@ Design/architecture ownership (owner directive 2026-08-14, supersedes every olde
   canonical Opus wrapper) — visual hierarchy, layout, interaction feel, product copy.
   On the Claude surface the Fable orchestrator may do this lane inline instead
   (owner: "Fable or Opus 5 does UI design — they do a better-looking piece").
-- **Big new features** (FULL tier or feature-scale scope): pair a
-  `[GPT-5.6 SOL · SHADOW]` on Grok's design/architecture lock (same frozen brief,
-  recorded to BENCH-shadow.jsonl as `genre:design`/`genre:architecture` — this builds
-  the design ledger that does not exist yet) AND a `[FABLE · DESIGN REVIEW]` (Claude
-  surface) or `[CLAUDE OPUS 5 · DESIGN REVIEW]` (Codex surface) pass over the lock
-  before build starts.
+- **No Sol shadow on architecture/design (owner 2026-08-14): Grok locks it solo.**
+  Sol is too slow to sit on the critical path for a design lane that Grok already owns.
+  On **big new features** (FULL tier / feature-scale) the only pre-build design gate is a
+  fast `[FABLE · DESIGN REVIEW]` (Claude surface) or `[CLAUDE OPUS 5 · DESIGN REVIEW]`
+  (Codex surface) pass over Grok's lock — a Claude-fast quality check, not a slow Sol
+  pair. Architecture correctness is still caught downstream by the standing adversarial
+  review on the built diff. (Re-add a design/arch shadow only on explicit owner request;
+  if one is ever wanted for benchmarking, use a FAST shadow, never Sol.)
 - Sol retains security/product judgment escalations and the final verdict.
 
 Kimi K3 is a measured design/plan candidate, not an automatic replacement for
@@ -110,10 +112,26 @@ an independent voice; it is the exact claim the review exists to check.
   a zero or missing denominator did not run.
 - Append at least one LESSONS.md line whenever the run had any retry, timeout, or
   substituted voice — a run with retries and no LESSONS entry is an unfinished report.
+- **Benchmark ledger is mandatory, not optional (owner 2026-08-14 — "models should
+  always be benchmarked").** Every GRADED PAIR the run produced — any review/verdict/
+  adversarial pair, and any effort experiment (e.g. Grok xhigh vs Sol high) — MUST be
+  appended to `BENCH-shadow.jsonl` via `scripts/Add-FleetShadowRow.ps1` (required keys
+  run/genre/primary/shadow/winner; scores + detail in `-ExtraJson`) BEFORE the run
+  completes. A graded pair with no ledger row is an incomplete run, same rule as
+  receipts. (Formal paired IMPLEMENTATION benchmarks still use `Record-GrokBenchmark.ps1`
+  → `BENCH-grok45.jsonl`.) SOLO primary lanes with no shadow — Grok planning and
+  architecture, where the owner removed the shadow for speed — produce NO pair and are
+  therefore NOT head-to-head benchmarked by design; they are tracked operationally via
+  receipts + `Get-FleetLaneFit.ps1` (duration, gate-pass), never a win/loss row. You
+  cannot have both "no slow shadow" and "always head-to-head benchmarked" on one lane.
 - merge-readiness runs MUST quote the `merge-readiness: ...` reducer line verbatim
   from `scripts/Assert-FleetMergeReadiness.ps1 -ReceiptDir <dir> -RunId <id>
   -ExpectedPacketSha256 <hex>` (same "missing line = did not run" rule as Fallow /
   filesize / lane-spans).
+- Any run that dispatched a wave plan MUST quote the `plan-parallelism: ... defects: 0`
+  reducer line from `scripts/Assert-FleetPlanParallelism.ps1 -PlanPath <plan.md>`
+  (owner 2026-08-14: maximally parallel is the enforced standard). A dispatched plan
+  with no quoted line, or defects > 0, means the plan gate did not pass — blocker.
 - Any review, completion, approval, or merge-readiness claim MUST run
   `Assert-FleetReviewCertification.ps1` last and quote its `certification:` line plus every
   reducer line it re-emits. Unless the last line says `certification: CERTIFIED`, the
@@ -488,8 +506,8 @@ directive 2026-08-14) — record each in the decision ledger. Tasks flagged `ui`
 (visual hierarchy, layout, interaction feel, product copy) get their decisions LOCKED
 by a parallel `[CLAUDE OPUS 5 · UI DESIGN]` pass (Fable inline on the Claude surface)
 and the plan consumes those locks as constraints. On big new features (FULL tier /
-feature-scale scope) add the Sol design/arch shadow + Fable/Opus design review from
-the Design/architecture ownership block before build starts.
+feature-scale scope) add the fast Fable/Opus design review over Grok's lock before build
+starts (NO Sol design/arch shadow — owner 2026-08-14, Sol too slow for the critical path).
 Sol lanes still go through `scripts/Invoke-Sol.ps1` (never raw `codex exec`): the
 wrapper forces `-c model_reasoning_effort="high"` so Sol never inherits the config
 default (`xhigh`, which reads as a hang), resolves the codex launcher deterministically
@@ -502,14 +520,26 @@ escalation conditions using [references/mode-selection.md](references/mode-selec
 Do not spend a separate call on classification. Record its session ID and write its locked plan to
 `docs/superpowers/plans/YYYY-MM-DD-<topic>-fleet.md`.
 
-Instruct the planner to emit a MAXIMALLY PARALLEL wave graph — this is a stated planning
-objective, not a nicety. The planner structures the work so the most tasks possible run
-concurrently in the fewest waves: partition the change into disjoint-file-scope tasks
-that can proceed independently, and add a dependency edge ONLY where task B genuinely
-consumes task A's output or writes the same files. The plan carries a one-line
-`parallel width: <max concurrent tasks> across <N> waves; critical path <M> tasks` and,
-for every dependency edge, a half-line reason. An unexplained edge, or a serial chain of
-same-scope-independent tasks, is a planning defect to send back — not something to build.
+Instruct the planner to emit a MAXIMALLY PARALLEL wave graph — this is an ENFORCED
+STANDARD, not orchestrator discretion (owner directive 2026-08-14). The planner
+structures the work so the most tasks possible run concurrently in the fewest waves:
+partition the change into disjoint-file-scope tasks that can proceed independently, and
+add a dependency edge ONLY where task B genuinely consumes task A's output or writes the
+same files. **Every plan MUST embed exactly ONE machine-readable ```plan-graph``` block**
+(`{width, critical_path, tasks:[{id, wave, files[], deps:[{on, reason}]}]}`) — the
+deterministic gate `scripts/Assert-FleetPlanParallelism.ps1 -PlanPath <plan.md>` parses
+it and FAILS unless the plan is maximally parallel GIVEN ITS DECLARED DEPENDENCY EDGES:
+every task in the EARLIEST wave its deps allow (wave == 1 + max dep wave), every edge
+reasoned, same-wave scopes disjoint (normalized, prefix containment counts), stated
+width/critical-path matching computed, zero or two blocks = fail. A failing plan
+RETURNS TO THE PLANNER. This is NOT honor-system: `Assert-FleetReviewCertification.ps1`
+child-runs this gate whenever `-LockedPlan` is passed, so a plan-driven run is
+structurally UNCERTIFIED without `plan-parallelism: ... defects: 0` in its reducer set.
+Known scope limit: edge LEGITIMACY is not machine-checkable — a fabricated edge with a
+junk reason passes the gate; the gate's job is making every serialization EXPLICIT and
+AUDITABLE, and the plan reviewer audits the edges (a fake edge is a review finding).
+Merge-order / resource-contention is NOT a dep edge: those tasks stay same-wave
+(isolated worktrees; ordering handled at integration).
 
 Every charter also carries a 3-5 line INTENT BLOCK (Fable directive 2026-07-23):
 what the user is actually after, why this task exists, and what failure looks like
@@ -542,10 +572,12 @@ Validation gate before dispatch:
 - new paths are marked new
 - same-wave file scopes are disjoint
 - merge-order dependencies are not mistaken for build-order dependencies
-- anti-serialization: every dependency edge carries a reason, and no two tasks with
-  disjoint file scope and no real data dependency sit in different waves. A needless
-  serial chain fails validation and returns to the planner — the default target is minimum
-  critical path, and the plan states its `parallel width` / `critical path` line
+- anti-serialization is DETERMINISTIC, not eyeballed: run
+  `Assert-FleetPlanParallelism.ps1 -PlanPath <plan.md>` and quote its
+  `plan-parallelism: ... defects: K` line. `K > 0` (needless serialization, unexplained
+  edge, same-wave scope overlap, wave-order error, or stated-vs-computed mismatch)
+  fails validation and returns the plan to the planner. Missing plan-graph block =
+  fail. Missing reducer line in the report = the gate did not run
 
 After validation, run canonical live transport probes for Opus, GLM, and Grok before
 full/review dispatch. A wrapper/config/PATH failure is a Fleet defect to repair before
@@ -610,7 +642,7 @@ Canonical labels:
 | Work | Lane |
 | --- | --- |
 | Locked wave plan / decomposition (non-design) | Grok 4.6 high (`[GROK 4.6 · PLANNER]`, read-only lane; owner adoption 2026-08-14); xhigh only when ambiguous/high-impact |
-| Architecture + non-UI design decisions (API shape, data model, service boundaries; incl. locks consumed by the plan) | Grok 4.6 high; xhigh when ambiguous/high-impact (owner 2026-08-14). Big new features: + `[GPT-5.6 SOL · SHADOW]` pair (ledger `genre:design`/`architecture`) + Fable/Opus 5 design review |
+| Architecture + non-UI design decisions (API shape, data model, service boundaries; incl. locks consumed by the plan) | Grok 4.6 high; xhigh when ambiguous/high-impact (owner 2026-08-14). Locks solo — NO Sol shadow (too slow). Big new features: fast Fable/Opus 5 design review over the lock; correctness still caught by the standing adversarial review on the built diff |
 | Supervision, integration, gates, mechanical dedupe | GPT-5.6 Terra high; xhigh only for exceptional ambiguity |
 | Final plan-coverage verification and verdict | Fresh GPT-5.6 Sol session (cross-family check on the Grok plan — the planner never verifies its own coverage) |
 | Routine arbitration (mechanical disputes, dedupe, gate disagreements) | GPT-5.6 Terra high (research3); Sol arbitration reserved for design/security/hard judgment and FULL cross-family review scoring |
@@ -841,13 +873,13 @@ plan-lane shadow either direction (owner 2026-08-14): Grok plans solo — a pair
 shadow-plan just slows the critical-path head, and the planning evidence is deemed
 sufficient.** Plan-genre `sol_replacement` rows stop accumulating; re-open a paired
 plan lane only on owner request or a suspected Grok-planner regression.
-Architecture/non-UI design moved to Grok too (owner 2026-08-14) — on BIG NEW FEATURES
-Sol shadow-pairs Grok's design/arch lock (`genre:design`/`genre:architecture` rows;
-this builds the design ledger that had zero rows when the call was made) with a
-Fable/Opus 5 design review over the lock. Arbitration and final-verdict lanes are
-UNCHANGED: Sol stays primary there, and Grok's shadow on those lanes continues as
-below. Review-genre pairs keep favoring Sol — that is why the final verdict did NOT
-move.
+Architecture/non-UI design moved to Grok too (owner 2026-08-14) — Grok LOCKS IT SOLO,
+no Sol shadow (Sol too slow for the critical path; owner directive same day). Big new
+features get only a fast Fable/Opus 5 design review over Grok's lock; arch correctness is
+caught by the standing adversarial review on the built diff. Arbitration and
+final-verdict lanes are UNCHANGED: Sol stays primary there, and Grok's shadow on those
+lanes continues as below. Review-genre pairs keep favoring Sol — that is why the final
+verdict did NOT move.
 
 Original goal: measure whether Grok 4.6 can replace Sol as architect/planner — Grok is far
 cheaper and faster. This is the INVERSE of the

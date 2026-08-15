@@ -416,6 +416,28 @@ try {
   ) 'missing real gate defaults'
   Check 'cert derives private OutputManifest' ($defBody -match 'OutputManifest') 'missing OutputManifest wiring'
   Check 'cert re-attests after reducers' (($defBody -match 'Test-AttestIntact') -and ($defBody -match "failed: 'drift'|Emit-Uncertified 'drift'")) 'missing drift re-attest'
+
+  # --- plan-parallelism gate (REAL gate, no mock): LockedPlan present => gate RUNS ---
+  $goodGraph = '{"width":2,"critical_path":2,"tasks":[{"id":"T1","wave":1,"files":["a.ts"],"deps":[]},{"id":"T2","wave":1,"files":["b.ts"],"deps":[]},{"id":"T3","wave":2,"files":["c.ts"],"deps":[{"on":"T1","reason":"consumes T1 schema"}]}]}'
+  $serialGraph = '{"width":1,"critical_path":3,"tasks":[{"id":"T1","wave":1,"files":["a.ts"],"deps":[]},{"id":"T2","wave":2,"files":["b.ts"],"deps":[]},{"id":"T3","wave":3,"files":["c.ts"],"deps":[]}]}'
+
+  $fxPlanOk = New-GoodFixture 'plan-gate-ok'
+  $planOk = Join-Path $root 'locked-plan-ok.md'
+  Write-Utf8 $planOk ("# plan`n" + '```plan-graph' + "`n" + $goodGraph + "`n" + '```' + "`n")
+  $rP = Invoke-Cert ($fxPlanOk.Args + @('-LockedPlan', $planOk))
+  $lastP = Get-LastLine $rP.Raw
+  Check 'plan-gate: valid plan-graph CERTIFIED with 4/4 reducers' (($rP.ExitCode -eq 0) -and ($lastP -match 'certification: CERTIFIED') -and ($lastP -match 'reducers: 4/4')) $lastP
+  Check 'plan-gate: reducer line emitted + zero defects' ($rP.Raw -match 'plan-parallelism: width 2 across 2 waves.*defects: 0') 'missing plan-parallelism line'
+
+  $fxPlanNone = New-GoodFixture 'plan-gate-noblock'
+  $planNone = Join-Path $root 'locked-plan-noblock.md'
+  Write-Utf8 $planNone "# plan with prose only, no graph block`n"
+  Expect-Uncertified 'plan-gate: wave plan without plan-graph block' (Invoke-Cert ($fxPlanNone.Args + @('-LockedPlan', $planNone))) 'plan'
+
+  $fxPlanSerial = New-GoodFixture 'plan-gate-serial'
+  $planSerial = Join-Path $root 'locked-plan-serial.md'
+  Write-Utf8 $planSerial ("# plan`n" + '```plan-graph' + "`n" + $serialGraph + "`n" + '```' + "`n")
+  Expect-Uncertified 'plan-gate: needlessly serial plan' (Invoke-Cert ($fxPlanSerial.Args + @('-LockedPlan', $planSerial))) 'plan'
 }
 catch {
   $failed = $true

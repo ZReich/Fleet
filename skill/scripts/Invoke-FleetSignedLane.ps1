@@ -28,9 +28,14 @@ param(
   [string]$RequestedModel = '',
   [string]$ObservedModel = '',
   [string]$ModelEvidence = '',
-  [string]$EmitterId = ''
+  [string]$EmitterId = '',
+  # Kimi transport only: repo copy-sandbox path forwarded as -RepoSandbox so the seat's
+  # one-command dispatch runs THROUGH the signed lane (owner 2026-08-15). Ignored for
+  # every other transport.
+  [string]$KimiRepoSandbox = ''
 )
 $ErrorActionPreference = 'Stop'
+$script:KimiRepoSandboxArg = $KimiRepoSandbox
 $utf8 = New-Object System.Text.UTF8Encoding $false
 . (Join-Path $PSScriptRoot 'FleetReceiptSignature.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'RunLease.Helpers.ps1')
@@ -66,6 +71,11 @@ function Invoke-AllowlistedWrapper([string]$ScriptPath, [string]$PromptText, [st
   # -Mode json for the transport envelope, but explicitly select its review mode.
   if ($ReceiptKind -ceq 'review_lane' -and $TransportName -ceq 'Invoke-Grok45') {
     foreach ($t in @('-Review', '-Effort', 'high', '-TimeoutSeconds', '900')) { [void]$tokens.Add($t) }
+  }
+  # Kimi seat: forward the repo copy-sandbox so the SKILL's one-liner dispatch works
+  # THROUGH the signed lane (a direct wrapper run mints no receipt => kimi-seat MISSING).
+  if ($TransportName -ceq 'Invoke-KimiK3' -and -not [string]::IsNullOrWhiteSpace($script:KimiRepoSandboxArg)) {
+    [void]$tokens.Add('-RepoSandbox'); [void]$tokens.Add($script:KimiRepoSandboxArg)
   }
   if (-not [string]::IsNullOrEmpty($PromptPath)) {
     [void]$tokens.Add('-PromptFile'); [void]$tokens.Add($PromptPath)

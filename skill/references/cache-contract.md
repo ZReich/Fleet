@@ -50,7 +50,7 @@ Metric: `first_result_s` across the wave.
 
 ## Config stability
 
-Keep **effort / thinking** settings constant for the life of a cached prefix. Changing effort or thinking mid-prefix **invalidates** the message cache. Prefer one session per phase with a fixed effort tier (see `references/opus5-orchestrator.md`).
+Keep **effort / thinking** settings constant for the life of a cached prefix. Changing effort or thinking mid-prefix **invalidates** the message cache. Prefer one session per phase with a fixed effort tier.
 
 ## Measured payoff
 

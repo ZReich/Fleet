@@ -223,15 +223,16 @@ try {
 
   # C: security identity ok(1/2); hosted masquerade FAILED; generic FAILED
   try {
-    $names = @('v-sol.md','v-terra.md','v-opus.md','v-glm-security.md','v-grok.md')
-    $mOk = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='glm-5.3'; 'v-grok.md'='grok-4.6' }
-    $rOk = @{ 'v-sol.md'='general-review'; 'v-terra.md'='general-review'; 'v-opus.md'='general-review'; 'v-glm-security.md'='security-review'; 'v-grok.md'='general-review' }
+    # Six seats: FULL requires the kimi seat (owner 2026-08-15).
+    $names = @('v-sol.md','v-terra.md','v-opus.md','v-glm-security.md','v-grok.md','v-kimi.md')
+    $mOk = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='glm-5.3'; 'v-grok.md'='grok-4.6'; 'v-kimi.md'='kimi-k3' }
+    $rOk = @{ 'v-sol.md'='general-review'; 'v-terra.md'='general-review'; 'v-opus.md'='general-review'; 'v-glm-security.md'='security-review'; 'v-grok.md'='general-review'; 'v-kimi.md'='general-review' }
     $s0 = New-AdvShip 'mut-c-ok'; Write-AdvVoices $s0 $names $mOk $rOk
     $r0 = Invoke-Adv $s0.Repo $s0.Base $s0.ReviewDir $s0.ReceiptDir
     if ($r0.ExitCode -ne 0 -or $r0.Raw -notmatch 'security-voices: 1/2' -or (Get-VerdictToken $r0.Raw) -ne 'ok') { throw ("valid want ok 1/2: {0}" -f $r0.Raw) }
     $s1 = New-AdvShip 'mut-c-host'
     # Hosted model under same v-glm-security lane (keep 5 distinct model keys; security identity fails)
-    $mHost = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='fable'; 'v-grok.md'='grok-4.6' }
+    $mHost = @{ 'v-sol.md'='sol'; 'v-terra.md'='terra'; 'v-opus.md'='claude-opus-5'; 'v-glm-security.md'='fable'; 'v-grok.md'='grok-4.6'; 'v-kimi.md'='kimi-k3' }
     Write-AdvVoices $s1 $names $mHost $rOk
     $r1 = Invoke-Adv $s1.Repo $s1.Base $s1.ReviewDir $s1.ReceiptDir
     if ($r1.ExitCode -ne 1 -or $r1.Raw -notmatch 'security-voices: 0/2' -or (Get-VerdictToken $r1.Raw) -ne 'FAILED') { throw ("hosted want FAILED: {0}" -f $r1.Raw) }

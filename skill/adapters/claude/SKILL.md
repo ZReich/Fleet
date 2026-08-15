@@ -92,7 +92,8 @@ Fable/Opus/four-voice drift.
   review is a build-time gate and does NOT replace this merge-time loop. Full
   sequence: memory feedback_babysit_prs / automerge-greptile-5of5.
 - Review scales by tier (MICRO/LIGHT/STANDARD/FULL, see references/mode-selection.md);
-  FULL runs all five blind voices in ONE concurrent wave via detached wrapper jobs
+  FULL runs all six seats (five blind voices + the REQUIRED Kimi K3 seat, owner
+  2026-08-15) in ONE concurrent wave via detached wrapper jobs
   (rolling dispatch fallback), not two batches. Cross-family judging is mandatory on
   every scored comparison: no self-grade, >=1 cross-family grader, fabrication-flagged
   models (Gemini, Kimi) excluded from grading, anonymize + position-swap.
@@ -241,10 +242,11 @@ for Kimi session trees; cleanup failure invalidates the run. Use copied images o
 for visual evidence and accept that evidence only when the wrapper proves a
 copied-image ReadMediaFile call.
 Never launch raw Kimi, update, server, web, ACP, auto mode, or yolo mode from this
-adapter. K3 is not a standard final-review voice and never overrides Sol. Exception
-(2026-07-22): FULL reviews add the K3 PROXY data seat via Invoke-KimiK3Proxy.ps1 —
-sixth voice, NON-GATING, qualification evidence only, bounded under the 15-min token
-TTL; outage = no_contest, never blocks the panel (review-protocol.md charter 6).
+adapter. K3 never overrides Sol. Since 2026-08-15 (owner) the K3 seat on FULL is
+REQUIRED and dispatches through the signed lane (Invoke-FleetSignedLane -Transport
+Invoke-KimiK3) - the old NON-GATING Invoke-KimiK3Proxy data seat is superseded and
+mints nothing the gate accepts. kimi-seat: qualified counts as a voice; flake/refusal
+= excused via its receipt; silent non-dispatch FAILS the review gate.
 Tier selection records `k3_considered: yes|no — <why>` per mode-selection.md.
 
 K3 has a second, guarded lane for research: `[KIMI K3 · RESEARCH]` may fan out its

@@ -1,5 +1,5 @@
 # Gate: Fleet run needs a real adversarial-review receipt covering shipped diff.
-# Summary: review: <tier> | voices: N qualified / M candidates / R required [| profile: ... | security-voices: P/2] | packet: <state> | verdict: ok|FAILED
+# Summary: review: <tier> | voices: N qualified / M candidates / R required [| profile: ... | security-voices: P/2] [| kimi-seat: ok|excused|MISSING|unknown (FULL only)] | packet: <state> | verdict: ok|FAILED
 # Authority: signed review_lane receipts under -ReceiptDir (HMAC via run lease). Filename is display only.
 # -ReviewProfile / -Tier optional assertions; signed plan-derived values win; conflict => FAILED.
 param(
@@ -142,17 +142,19 @@ function Test-ManifestShape([string]$Path) {
   return $null
 }
 
-function Format-Summary([string]$T, [int]$Q, [int]$C, [int]$R, [string]$P, [string]$V, [string]$Prof = 'general', [int]$SecP = 0) {
+function Format-Summary([string]$T, [int]$Q, [int]$C, [int]$R, [string]$P, [string]$V, [string]$Prof = 'general', [int]$SecP = 0, [string]$KimiSeat = '') {
+  $seat = if ([string]::IsNullOrWhiteSpace($KimiSeat)) { '' } else { " | kimi-seat: $KimiSeat" }
   if ($Prof -eq 'security-sensitive') {
-    return "review: $T | voices: $Q qualified / $C candidates / $R required | profile: security-sensitive | security-voices: $SecP/2 | packet: $P | verdict: $V"
+    return "review: $T | voices: $Q qualified / $C candidates / $R required | profile: security-sensitive | security-voices: $SecP/2$seat | packet: $P | verdict: $V"
   }
-  return "review: $T | voices: $Q qualified / $C candidates / $R required | packet: $P | verdict: $V"
+  return "review: $T | voices: $Q qualified / $C candidates / $R required$seat | packet: $P | verdict: $V"
 }
 
 function Write-Result {
   param(
     [string]$Summary, [string]$Verdict, [string]$Packet, [int]$Qualified, [int]$Candidates,
-    [int]$Required, [object[]]$VoiceRows, [string]$Message = $null, [string]$VoicesNote = $null
+    [int]$Required, [object[]]$VoiceRows, [string]$Message = $null, [string]$VoicesNote = $null,
+    [string]$KimiSeat = ''
   )
   $qualifiedNames = @($VoiceRows | Where-Object { $_.Qualified } | ForEach-Object { $_.Name } | Select-Object -Unique)
   if ($Mode -eq 'json') {
@@ -172,6 +174,7 @@ function Write-Result {
       voice_files       = @($qualifiedNames)
       voices_detail     = @($details)
     }
+    if (-not [string]::IsNullOrWhiteSpace($KimiSeat)) { $obj['kimi_seat'] = $KimiSeat }
     if ($Message) { $obj['message'] = $Message }
     if ($VoicesNote) { $obj['voices_note'] = $VoicesNote }
     Write-Output (($obj | ConvertTo-Json -Compress -Depth 6))
@@ -184,9 +187,11 @@ function Write-Result {
 }
 
 function Emit-Fail([string]$Msg, [string]$T, [int]$Req, [string]$Prof, [string]$Pkt = 'missing') {
-  $summary = Format-Summary $T 0 0 $Req $Pkt 'FAILED' $Prof 0
+  # FULL lines always carry the seat segment; pre-analysis failures cannot know it.
+  $seat = if ($T -eq 'FULL') { 'unknown' } else { '' }
+  $summary = Format-Summary $T 0 0 $Req $Pkt 'FAILED' $Prof 0 $seat
   Write-Result -Summary $summary -Verdict 'FAILED' -Packet $Pkt -Qualified 0 -Candidates 0 `
-    -Required $Req -VoiceRows @() -Message $Msg
+    -Required $Req -VoiceRows @() -Message $Msg -KimiSeat $seat
   exit 1
 }
 
@@ -290,11 +295,26 @@ if ($ReviewProfile -eq 'security-sensitive') {
     elseif (-not $secStats.Ok) { $packetMsg = 'security-sensitive: need >=1 qualified open-weights security identity (glm|kimi preferred; grok backup)' }
   }
 }
+# FULL: the Kimi K3 seat is REQUIRED, first-class (owner 2026-08-15) — dispatch-mandatory-
+# or-excused. A kimi receipt must EXIST: qualified => 'ok' (counts as a voice like any
+# other), present-but-unqualified (provider flake / refusal / format loss) => 'excused'
+# (never sinks the run), NO kimi receipt at all => 'MISSING' => FAILED. Silence is the
+# only failure mode; a flaked dispatch leaves a receipt and is excused.
+$kimiSeatOk = $true; $kimiSeat = ''
+if ($Tier -eq 'FULL') {
+  $kimiRows = @($voiceRows | Where-Object { [string]$_.ModelKey -eq 'kimi' })
+  if ($kimiRows.Count -eq 0) {
+    $kimiSeatOk = $false; $kimiSeat = 'MISSING'
+    if (-not $packetMsg) { $packetMsg = 'FULL requires the Kimi K3 seat: no kimi receipt found. Dispatch it (Invoke-KimiK3.ps1 -RepoSandbox <repo> for repo-wide review); a flaked lane leaves a receipt and is excused - silent non-dispatch is the failure.' }
+  }
+  elseif (@($kimiRows | Where-Object { $_.Qualified }).Count -gt 0) { $kimiSeat = 'ok' }
+  else { $kimiSeat = 'excused' }
+}
 $verdict = 'FAILED'
-if ($packetStatus -eq 'match' -and $voicesOk -and $securityOk) { $verdict = 'ok' }
+if ($packetStatus -eq 'match' -and $voicesOk -and $securityOk -and $kimiSeatOk) { $verdict = 'ok' }
 $note = $null; if ($Tier -eq 'MICRO' -and $required -eq 0) { $note = 'voices were not required' }
-Write-Result -Summary (Format-Summary $Tier $voiceCount $candidates $required $packetStatus $verdict $ReviewProfile $secPreferred) `
+Write-Result -Summary (Format-Summary $Tier $voiceCount $candidates $required $packetStatus $verdict $ReviewProfile $secPreferred $kimiSeat) `
   -Verdict $verdict -Packet $packetStatus -Qualified $voiceCount -Candidates $candidates -Required $required `
-  -VoiceRows $voiceRows -Message $packetMsg -VoicesNote $note
+  -VoiceRows $voiceRows -Message $packetMsg -VoicesNote $note -KimiSeat $kimiSeat
 if ($verdict -eq 'ok') { exit 0 }
 exit 1

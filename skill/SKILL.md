@@ -156,7 +156,7 @@ single-model collapse:
 | MICRO | deterministic gates only — state it explicitly, zero model voices |
 | LIGHT | Sol + fresh Terra; +1 cross-family (GLM via `Invoke-PiGlm.ps1`) when behavior is touched |
 | STANDARD | Sol + Terra + one specialist third voice by change type |
-| FULL | all five blind voices in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1` — plus the `Invoke-KimiK3Proxy.ps1` non-gating data seat. Security / `review_profile: security-sensitive` MUST dispatch >=1 open-weights security identity (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic `v-glm`/`v-kimi`/`v-kimi-proxy` do not satisfy. A hosted refusal MUST trigger open-weights failover (>=1 real completion from {Kimi, GLM, Grok}); see [references/review-integrity.md](references/review-integrity.md). |
+| FULL | all six seats in ONE concurrent wave — `Invoke-Sol.ps1`, Terra (`codex exec`), `Invoke-Opus48.ps1 -Model claude-opus-5`, `Invoke-PiGlm.ps1`, `Invoke-Grok45.ps1`, and the **Kimi K3 seat, REQUIRED first-class (owner 2026-08-15)**: dispatch THROUGH THE SIGNED LANE — `Invoke-FleetSignedLane.ps1 -Transport Invoke-KimiK3 -KimiRepoSandbox <repo> -PromptFile <charter> ...` (the signed lane forwards `-RepoSandbox` for repo-wide read; a DIRECT `Invoke-KimiK3.ps1` run mints no receipt and the seat reads MISSING). `Assert-FleetAdversarialReview` enforces `kimi-seat`: a kimi receipt MUST exist — qualified counts as a voice, a flaked/refused lane is `excused` via its receipt, NO receipt = `MISSING` = FAILED. Silent non-dispatch is the only failure mode. Supersedes the old non-gating `Invoke-KimiK3Proxy` data seat everywhere. Security / `review_profile: security-sensitive` MUST dispatch >=1 open-weights security identity (`v-glm-security` or `v-kimi-security`; `v-grok-security` backup) — generic `v-glm`/`v-kimi`/`v-kimi-proxy` do not satisfy. A hosted refusal MUST trigger open-weights failover (>=1 real completion from {Kimi, GLM, Grok}); see [references/review-integrity.md](references/review-integrity.md). |
 
 Implementation default for non-design work is Grok 4.6 via `Invoke-Grok45.ps1` (one
 cohesive charter + one structured self-check: self-run gates + short checklist) — NOT Terra implementing inline. Design,
@@ -295,8 +295,9 @@ is a WATCH, never a pass. Quote `static-gates: N/5 measured`, never a bare zero.
   one specialist third voice by change type.
 - `FULL`: any security/auth/secret/privacy/payment/migration/infra/cross-repo/public-
   API/unresolved-design/unknown-blast-radius trigger, explicit user request, or
-  `review_risk=hard`. Sol wave graph -> waves -> gates -> all five blind voices in ONE
-  concurrent wave -> Sol arbitration.
+  `review_risk=hard`. Wave graph -> waves -> gates -> all six FULL seats (five blind
+  voices + the REQUIRED Kimi K3 seat, owner 2026-08-15) in ONE concurrent wave -> Sol
+  arbitration.
 - `review`: no build. Snapshot the diff/PR, freeze the packet, run the tier's blind
   voices in one concurrent wave, consolidate fixes.
 - `merge-readiness`: invoke `/fleet merge-readiness <task>`. Review-oriented mode
@@ -673,16 +674,13 @@ Use Codex native subagents when the active tool surface exposes them. Otherwise
 use `codex exec` only for Codex worker lanes, preferably in a separate worktree
 for write-heavy work.
 
-## Claude Opus 5 as orchestrator
+## Claude Opus 5 never orchestrates (owner 2026-08-15)
 
-When Claude Opus 5 is the orchestrator (not only the review seat): use adaptive
-thinking (`thinking:{type:"adaptive"}` + `output_config.effort`); legacy
-`thinking.type:"enabled"` returns HTTP 400. Keep phase effort tiers constant per
-session (plan-lock=xhigh, arbitration=high, dispatch/receipt/telemetry=low–medium) —
-effort flips invalidate the message cache. Strip over-verify / "subagent verify"
-language (Opus 5 self-verifies by default); keep review blocker-focused. Spawn only
-large independent work; prefer one subagent; complexity-scaled fan-out only when
-needed. Full contract: [references/opus5-orchestrator.md](references/opus5-orchestrator.md).
+Claude Opus 5 must NOT be the orchestrator or supervisor of a Fleet run — measured
+across ~100 runs, it makes a mess of dispatch and supervision. On the Claude surface
+the orchestrator is Claude Fable or Claude Opus 4.8. Opus 5 keeps exactly the seats
+it is good at: UI design and the adversarial-review voice (via the canonical Opus
+wrapper). The old opus5-orchestrator contract is retired.
 
 ## Handoff Receipt and Lane Lifecycle (speed)
 
@@ -740,7 +738,10 @@ cutting long-horizon packets; and genuinely broad read-only research (`-Research
 when Sol judges fan-out is needed). Sol retains architecture, product, security, API,
 and final design judgment — Kimi never owns security judgment or final authority.
 Static deny, no host-repo write charter, no writes, no final authority remain mandatory.
-K3 does not join normal implementation or the FULL-tier blind-voice review barrier.
+K3 does not join normal implementation. On the FULL-tier review barrier K3 IS a
+required seat (owner 2026-08-15, dispatch-mandatory-or-excused via signed lane; see
+the Lane Utilization Contract) - it reviews as an additive voice but never grades
+other models and never holds final authority.
 Its noninteractive prompt mode auto-approves ordinary tools and cannot combine with plan
 mode, so prompt text alone is not a control boundary.
 
@@ -1433,11 +1434,15 @@ verification greps to the actual style (`stdin?.on` vs `stdin.on` matters).
 Panel size follows the tier (references/mode-selection.md): MICRO = deterministic
 gates only (one fast blind pass if user-facing); LIGHT = Sol + fresh Terra, +1
 cross-family voice when behavior is touched; STANDARD = Sol + Terra + one specialist;
-FULL = all five blind voices. Grok's implementation self-review is mandatory but never
-counts as an independent final-review voice. FULL also dispatches the Kimi K3 PROXY
-data seat (Invoke-KimiK3Proxy.ps1): a sixth, NON-GATING voice recorded for panel-
-qualification evidence only — see review-protocol.md charter 6; its outage or timeout
-never blocks the panel, and it never grades other models.
+FULL = all six seats: five blind voices + the REQUIRED Kimi K3 seat (owner
+2026-08-15, supersedes the old NON-GATING Invoke-KimiK3Proxy data seat). The K3 seat
+dispatches through the SIGNED LANE (`Invoke-FleetSignedLane.ps1 -Transport
+Invoke-KimiK3` - the proxy cannot mint a signed receipt and no longer satisfies
+anything). `kimi-seat` is enforced by Assert-FleetAdversarialReview: qualified counts
+as a voice, a flaked/refused lane is excused via its receipt, silence = FAILED. Its
+outage or timeout still never blocks the panel (excused); it never grades other
+models. Grok's implementation self-review is mandatory but never counts as an
+independent final-review voice.
 At FULL-review synthesis, the supervisor appends one K3 qualification row to
 `BENCH-k3-qualification.jsonl`; the tenth dispatched FULL row adds a Sol
 promotion-assessment task to the final report, never automatic promotion.

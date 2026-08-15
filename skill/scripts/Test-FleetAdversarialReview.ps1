@@ -15,6 +15,9 @@ function Case([string]$Name, [scriptblock]$Body) {
 }
 function Get-BareHighVoice { return ("HIGH`n" + $pad) }
 function EmptyManJson { return '{"schema_version":"1","packet_sha256":"' + $script:FixedSha + '","review_risk":"m","artifacts":[{"name":"x","bytes":0,"sha256":"' + $script:FixedSha + '"}]}' }
+# FULL now requires the Kimi K3 seat (owner 2026-08-15): six-seat fixtures = five + kimi.
+function Get-FullSixNames([string]$Glm = 'v-glm.md', [string]$Grok = 'v-grok.md', [string]$Kimi = 'v-kimi.md') { return @('v-sol.md', 'v-terra.md', 'v-opus.md', $Glm, $Grok, $Kimi) }
+function Get-FullSixBodies { return @((Get-FullFiveBodies) + @((Get-MdVoice 'LOW'))) }
 try {
   New-Item -ItemType Directory -Force -Path $root, $leaseHome | Out-Null
   $md3 = @((Get-MdVoice 'HIGH'), (Get-MdVoice 'MEDIUM'), (Get-MdVoice 'LOW'))
@@ -57,11 +60,11 @@ try {
     $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
     Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'voices: 3 qualified / 5 candidates / 5 required') "fanout-thin: $($run.Raw)"
   }
-  Case 'POSITIVE: FULL with grok fan-out and 5 distinct models -> exit 0' {
+  Case 'POSITIVE: FULL with grok fan-out and 6 distinct models incl kimi -> exit 0' {
     $s = New-Ship 'grok-fanout-full' 'gf2.txt'
-    Finish-Ship $s @($md3[0], $md3[1], $md3[2], (Get-MdVoice 'HIGH'), (Get-MdVoice 'MEDIUM'), (Get-MdVoice 'LOW'), (Get-MdVoice 'HIGH')) -Names @('v-sol.md','v-terra.md','v-opus5.md','v-glm.md','v-grok-spec.md','v-grok-correctness.md','v-grok-regression.md') -Tier 'FULL' | Out-Null
+    Finish-Ship $s @($md3[0], $md3[1], $md3[2], (Get-MdVoice 'HIGH'), (Get-MdVoice 'MEDIUM'), (Get-MdVoice 'LOW'), (Get-MdVoice 'HIGH'), (Get-MdVoice 'LOW')) -Names @('v-sol.md','v-terra.md','v-opus5.md','v-glm.md','v-grok-spec.md','v-grok-correctness.md','v-grok-regression.md','v-kimi.md') -Tier 'FULL' | Out-Null
     $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
-    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'voices: 5 qualified / 7 candidates / 5 required') "fanout-full: $($run.Raw)"
+    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'voices: 6 qualified / 8 candidates / 5 required' -and $run.Raw -match 'kimi-seat: ok') "fanout-full: $($run.Raw)"
   }
   Case 'NEGATIVE: empty diff non-MICRO -> FAILED (L1 zero-telemetry)' {
     $repo = New-Repo 'empty-diff'; $base = (& git -C $repo rev-parse HEAD).Trim(); $lease = New-TestLease
@@ -140,10 +143,21 @@ try {
     Finish-Ship $s @((Get-JsonVoice),(Get-MdVoice 'HIGH'),(Get-MdVoice 'MEDIUM')) -Names @('lane-result.json','v-2.md','v-3.md') -ModelOverride @{ 'lane-result.json' = 'sol'; 'v-2.md' = 'terra'; 'v-3.md' = 'opus' } | Out-Null
     Assert-True ((Ig $s.Repo $s.Base $s.ReviewDir 'STANDARD' $s.Lease.RunId $s.ReceiptDir).ExitCode -eq 0) 'json-voice'
   }
-  Case 'POSITIVE: general FULL with 5 models unchanged' {
-    $s = New-Ship 'gen-full5' 'gf.txt'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames) -Tier 'FULL' | Out-Null
+  Case 'POSITIVE: general FULL six seats incl kimi -> exit 0' {
+    $s = New-Ship 'gen-full6' 'gf.txt'; Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames) -Tier 'FULL' | Out-Null
     $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
-    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'voices: 5 qualified / 5 candidates / 5 required' -and $run.Raw -notmatch 'security-voices:') "gen-full: $($run.Raw)"
+    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'voices: 6 qualified / 6 candidates / 5 required' -and $run.Raw -match 'kimi-seat: ok' -and $run.Raw -notmatch 'security-voices:') "gen-full: $($run.Raw)"
+  }
+  Case 'NEGATIVE: FULL five voices, NO kimi receipt -> kimi-seat MISSING, exit 1' {
+    $s = New-Ship 'gen-full5-nokimi' 'gk.txt'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames) -Tier 'FULL' | Out-Null
+    $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
+    Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'kimi-seat: MISSING' -and $run.Raw -match 'verdict: FAILED') "no-kimi: $($run.Raw)"
+  }
+  Case 'POSITIVE: FULL five qualified + kimi refusal receipt -> kimi-seat excused, exit 0' {
+    $s = New-Ship 'gen-full5-kimiflake' 'ke.txt'
+    Finish-Ship $s @((Get-FullFiveBodies) + @((Get-RefusalJsonVoice))) -Names @((Get-FullFiveNames) + @('v-kimi-review.json')) -Tier 'FULL' | Out-Null
+    $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
+    Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'kimi-seat: excused') "kimi-excused: $($run.Raw)"
   }
   Case 'NEGATIVE: security-FULL 5 models no security identity -> FAIL' {
     $s = New-Ship 'sec-no-id' 'sn.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames) -Tier 'FULL' | Out-Null
@@ -155,7 +169,7 @@ try {
     Assert-True ((Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir).Raw -match 'security-voices: 0/2') 'sec-gen'
   }
   Case 'POSITIVE: security-FULL only v-glm-security (1/2) -> PASS' {
-    $s = New-Ship 'sec-glm1' 's1.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
+    $s = New-Ship 'sec-glm1' 's1.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
     Assert-True ((Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir).Raw -match 'security-voices: 1/2') "sec-1"
   }
   Case 'POSITIVE: security-FULL v-glm-security + v-kimi-security (2/2) -> PASS' {
@@ -164,7 +178,7 @@ try {
     Assert-True ((Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir).Raw -match 'security-voices: 2/2') 'sec-2'
   }
   Case 'POSITIVE: security-FULL neither preferred but v-grok-security backup -> PASS' {
-    $s = New-Ship 'sec-grok-bak' 'sb.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames -Grok 'v-grok-security.md') -Tier 'FULL' | Out-Null
+    $s = New-Ship 'sec-grok-bak' 'sb.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames -Grok 'v-grok-security.md') -Tier 'FULL' | Out-Null
     Assert-True ((Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir).Raw -match 'security-voices: 0/2') "sec-bak"
   }
   Case 'NEGATIVE: security-sensitive at LIGHT -> FAIL' {
@@ -196,7 +210,7 @@ try {
   }
   Case 'POSITIVE: locked-plan security, no caller profile -> enforces security' {
     $s = New-Ship 'lp-auth' 'lpa.txt' -Profile 'security-sensitive'
-    Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
+    Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
     $run = Invoke-Gate -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -Tier 'FULL' -LockedPlan $s.LockedPlan -OmitProfile -RunId $s.Lease.RunId -ReceiptDir $s.ReceiptDir -PacketManifest (Join-Path $s.ReviewDir 'packet-manifest.json')
     Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'verdict: ok' -and $run.Raw -match 'security-voices: 1/2' -and $run.Raw -match 'profile: security-sensitive') "lp-auth: $($run.Raw)"
   }
@@ -231,7 +245,7 @@ try {
     Assert-True ($run.ExitCode -eq 1) "lp-omit-full: $($run.Raw)"
   }
   Case 'POSITIVE: lp-present-matching general enforces' {
-    $s = New-Ship 'lp-match-gen' 'lmg.txt'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames) -Tier 'FULL' | Out-Null
+    $s = New-Ship 'lp-match-gen' 'lmg.txt'; Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames) -Tier 'FULL' | Out-Null
     $run = Invoke-Gate -Repo $s.Repo -BaseRef $s.Base -ReviewDir $s.ReviewDir -Tier 'FULL' -ReviewProfile 'general' -LockedPlan $s.LockedPlan -RunId $s.Lease.RunId -ReceiptDir $s.ReceiptDir -PacketManifest (Join-Path $s.ReviewDir 'packet-manifest.json')
     Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'verdict: ok') "lp-match: $($run.Raw)"
   }
@@ -278,7 +292,7 @@ try {
     Assert-True ($run.ExitCode -eq 1 -and $run.Raw -match 'signature|bad_signature|FAILED') "r3-wrongkey: $($run.Raw)"
   }
   Case 'R3: valid signed open-weights security voice qualifies' {
-    $s = New-Ship 'r3-valid-sec' 'r3f.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullFiveBodies) -Names (Get-FullFiveNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
+    $s = New-Ship 'r3-valid-sec' 'r3f.txt' -Profile 'security-sensitive'; Finish-Ship $s (Get-FullSixBodies) -Names (Get-FullSixNames -Glm 'v-glm-security.md') -Tier 'FULL' | Out-Null
     $run = Ig $s.Repo $s.Base $s.ReviewDir 'FULL' $s.Lease.RunId $s.ReceiptDir
     Assert-True ($run.ExitCode -eq 0 -and $run.Raw -match 'security-voices: 1/2' -and $run.Raw -match 'verdict: ok') "r3-valid: $($run.Raw)"
   }

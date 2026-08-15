@@ -129,6 +129,22 @@
         "break": "Delete or weaken the 'ArtifactFile is comma-joined at -File call sites' case so raw $reviewArtifacts arrays are not rejected."
       },
       "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-FleetContract.ps1"]
+    },
+    {
+      "id": "grok-dead-lane-bootstrap-envelope",
+      "title": "Grok implementation dead lane (bootstrap envelope) silently accepted",
+      "source": {
+        "commit": "fleet-wiki-20260815",
+        "evidence": "LESSONS.md 2026-08-15: Grok edit charters ended turn 1 with a blocked/partial bootstrap envelope, files_changed [], 0 tool calls, 0 edits; the blocked variant passed structured-audit and reported status ok (silent accept). Fix: Invoke-Grok45.ps1 dead_lane gate (0 tool calls + 0 observed changes on an observable manifest) fails closed."
+      },
+      "prompt": "Reintroduce silent acceptance of a Grok implementation dead lane: remove or weaken the $isDeadLane gate in Invoke-Grok45.ps1 so a worker envelope with 0 tool calls and 0 observed file changes reports status ok/needs_gate_validation instead of failure_category dead_lane; restore the gate.",
+      "task_stratum": "standard",
+      "allowed_paths": ["scripts/Invoke-Grok45.ps1", "scripts/Test-Invoke-Grok45.ps1"],
+      "mutation": {
+        "path": "scripts/Invoke-Grok45.ps1",
+        "break": "Force $isDeadLane = $false (or delete the dead_lane status branch) so a 0-tool-call, 0-change implementation envelope is accepted instead of failing closed."
+      },
+      "gate_commands": ["powershell -NoProfile -ExecutionPolicy Bypass -File scripts/Test-Invoke-Grok45.ps1 -Phase Wrapper -CasePattern \"dead lane|blocked lane\""]
     }
   ]
 }

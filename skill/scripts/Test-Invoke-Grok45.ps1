@@ -152,6 +152,15 @@ if ($scenario -eq "empty-output") {
   Write-Output (@{ sessionId=$sidEmpty; requestId="fake"; text=""; structuredOutput=$null } | ConvertTo-Json -Compress -Depth 4)
   exit 0
 }
+if ($scenario -eq "dead-lane-edit") {
+  # Bootstrap envelope, zero tool calls (model-changed only, no exec_done), zero file writes.
+  $sidDl = [guid]::NewGuid().ToString("n")
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:FLEET_GROK_MODEL_LOG) | Out-Null
+  @{ sid=$sidDl; msg="model changed"; ctx=@{model="grok-4.6"} } | ConvertTo-Json -Compress | Add-Content -LiteralPath $env:FLEET_GROK_MODEL_LOG
+  $bootstrapDl = [ordered]@{ schema_version="1"; status="blocked"; files_changed=[object[]]@(); files_reviewed=[object[]]@("target.txt"); acceptance_criteria=[object[]]@(@{criterion="bootstrap";status="blocked";evidence="Reading sources first"}); audit_passes=1; findings=[object[]]@(); fixes=[object[]]@(); remaining_executable_checks=[object[]]@(); self_check="Reading sources first"; notes="" }
+  Write-Output (@{ sessionId=$sidDl; requestId="fake"; text="working"; structuredOutput=$bootstrapDl } | ConvertTo-Json -Compress -Depth 6)
+  exit 0
+}
 if ($scenario -eq "review-markdown") {
   if ($Args -contains "--json-schema") { exit 41 }
   $promptIndexRm = [Array]::IndexOf($Args, "--prompt-file")
@@ -237,7 +246,7 @@ $audit = if ($scenario -eq "missing-audit") { $null } elseif ($scenario -eq "inv
   }
   # Productive done/partial must claim the observed delta. Unique touch when no scenario write.
   # Runner suites allow plan.md; wrapper worktrees have no plan.md so use a unique path.
-  if ($changed.Count -eq 0 -and $scenario -ne "blocked-no-write") {
+  if ($changed.Count -eq 0 -and $scenario -ne "blocked-no-write" -and $scenario -ne "blocked-legit") {
     $planPath = Join-Path (Get-Location) "plan.md"
     if (Test-Path -LiteralPath $planPath) {
       [IO.File]::AppendAllText($planPath, "`n")
@@ -251,13 +260,13 @@ $audit = if ($scenario -eq "missing-audit") { $null } elseif ($scenario -eq "inv
   [object[]]$findings = @()
   if ($scenario -eq "blank-finding") { $findings = @(@{severity="low";problem="";fix=""}) }
   $notes = if ($scenario -eq "braces-and-quotes") { 'contains { braces } and "escaped quotes"' } elseif ($scenario -eq "nonstring-notes") { 123 } else { "" }
-  [object[]]$criteria = if ($scenario -eq "empty-criteria") { ,@() } elseif ($scenario -eq "failed-criterion") { @(@{criterion="contract";status="failed";evidence="failed"}) } elseif ($scenario -eq "partial") { @(@{criterion="contract";status="blocked";evidence="executable check remains"}) } else { @(@{criterion="contract";status="passed";evidence="static inspection"}) }
+  [object[]]$criteria = if ($scenario -eq "empty-criteria") { ,@() } elseif ($scenario -eq "failed-criterion") { @(@{criterion="contract";status="failed";evidence="failed"}) } elseif ($scenario -in @("partial","blocked-legit")) { @(@{criterion="contract";status="blocked";evidence="read target; blocked on product decision"}) } else { @(@{criterion="contract";status="passed";evidence="static inspection"}) }
   # files_reviewed may omit changed paths (changed is inherently reviewed). unreviewed proves that.
   # Non-empty decorative reviewed avoids PS 5.1 ConvertTo-Json empty-array nulling.
   [object[]]$reviewed = if ($scenario -eq "unreviewed") { [object[]]@("docs/read-only.md") } else { [object[]]$changed }
   [object[]]$fixes = [object[]]@()
   if ($scenario -eq "nonstring-array") { $fixes = [object[]]@(123) }
-  @{ schema_version="1"; status=$(if ($scenario -eq "partial") { "partial" } else { "done" }); files_changed=[object[]]$changed; files_reviewed=$reviewed; acceptance_criteria=$criteria; audit_passes=$(if ($scenario -eq "below-passes") { 1 } else { 2 }); findings=[object[]]$findings; fixes=$fixes; remaining_executable_checks=@("tests by Terra"); self_check=$(if ($scenario -eq "blank-self-check") { " " } else { "static review" }); notes=$notes }
+  @{ schema_version="1"; status=$(if ($scenario -eq "partial") { "partial" } elseif ($scenario -eq "blocked-legit") { "blocked" } else { "done" }); files_changed=[object[]]$changed; files_reviewed=$reviewed; acceptance_criteria=$criteria; audit_passes=$(if ($scenario -eq "below-passes") { 1 } else { 2 }); findings=[object[]]$findings; fixes=$fixes; remaining_executable_checks=@("tests by Terra"); self_check=$(if ($scenario -eq "blank-self-check") { " " } else { "static review" }); notes=$notes }
 }
 $finalObject = @{ sessionId=$sid; requestId="fake"; text=$(if ($isBashProbe) { "GROK_BASH_OK" } else { "done" }); structuredOutput=$audit }
 $final = if ($scenario -in @("multiline-final","multiline-progress-final","braces-and-quotes")) { $finalObject | ConvertTo-Json -Depth 6 } else { $finalObject | ConvertTo-Json -Compress -Depth 6 }
@@ -342,7 +351,7 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
   Case "review has no Fleet turn cap by default" { $run = Run-Wrapper "default-no-turn-cap" 10 -Review; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $null -eq $json.max_turns) "unexpected default turn cap" }
   Case "review default timeout is 15 minutes" { $run = Run-Wrapper "success" 0 -Review; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.timeout_seconds -eq 900) "wrong review timeout" }
   Case "implementation default timeout is 20 minutes" { $run = Run-Wrapper "success" 0; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.timeout_seconds -eq 1200) "wrong implementation timeout" }
-  Case "xhigh maps to highest supported effort" { $run = Run-Wrapper "success" 10 -Effort "xhigh"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.requested_effort -eq "xhigh" -and $json.effective_effort -eq "high") "xhigh was not mapped" }
+  Case "xhigh passes through on grok-4.6 (its highest supported effort)" { $run = Run-Wrapper "success" 10 -Effort "xhigh"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.requested_effort -eq "xhigh" -and $json.effective_effort -eq "xhigh") "xhigh must pass through on grok-4.6" }
   Case "phase telemetry is emitted" { $run = Run-Wrapper "success"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.model_turns -eq 1 -and $json.model_seconds -eq 1.25 -and $json.tool_call_count -eq 1 -and $json.tool_seconds -eq 0.25 -and $json.final_prompt_tokens -eq 500) "missing phase telemetry" }
   Case "explicit turn cap remains available" { $run = Run-Wrapper "explicit-turn-cap" 10 -Review -MaxTurns 37; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.max_turns -eq 37) "explicit max turns not forwarded" }
   Case "recovered tool error is trusted telemetry" { $run = Run-Wrapper "recovered-tool-error"; $json=$run.Raw|ConvertFrom-Json; Assert-True ($run.ExitCode -eq 0 -and $json.tool_error_count -eq 1) "expected one trusted tool error" }
@@ -408,6 +417,26 @@ if ($scenario -eq "trailing-junk") { Write-Output "unexpected trailing text" }
     $run = Run-Wrapper "empty-output"
     $json = $run.Raw | ConvertFrom-Json
     Assert-True ($run.ExitCode -ne 0 -and $json.failure_category -eq "report") "expected empty-output failure: $($run.Raw)"
+  }
+  Case "dead lane (0 tool calls, 0 changes) fails closed as dead_lane" {
+    # fleet-wiki-20260815: edit charter ended turn 1 with a blocked bootstrap envelope,
+    # files_changed [], zero tool calls, zero edits. The blocked variant used to pass
+    # structured-audit and report status ok (silent accept). Must now fail closed.
+    $run = Run-Wrapper "dead-lane-edit"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($run.ExitCode -ne 0 -and $json.status -eq "error" -and $json.failure_category -eq "dead_lane" -and $json.dead_lane -eq $true -and $json.tool_call_count -eq 0 -and $json.fail_reason -match "bootstrap envelope") "expected dead_lane fail-closed: $($run.Raw)"
+  }
+  Case "blocked lane that engaged tools is NOT a dead lane" {
+    # Negative control: same zero file changes, but the worker read the target first
+    # (tool_call_count > 0). The gate keys on engagement, so this must not be dead_lane.
+    $run = Run-Wrapper "blocked-legit"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($run.ExitCode -eq 0 -and $json.dead_lane -eq $false -and $json.failure_category -ne "dead_lane" -and $json.tool_call_count -ge 1) "engaged blocked lane must not be dead_lane: $($run.Raw)"
+  }
+  Case "clean success is not a dead lane" {
+    $run = Run-Wrapper "success"
+    $json = $run.Raw | ConvertFrom-Json
+    Assert-True ($json.dead_lane -eq $false) "clean success must not be dead_lane: $($run.Raw)"
   }
   Case "review markdown json mode" {
     $run = Run-Wrapper "review-markdown" 10 -Review

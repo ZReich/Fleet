@@ -725,6 +725,7 @@ try {
     $promptText += "`nReturn free-form Markdown as the review deliverable. Do not return the implementation worker JSON envelope."
   } else {
     $promptText += "`nReturn only the JSON object required by the supplied schema. Populate every field. Perform exactly $MinimumAuditPasses static adversarial self-review pass(es); fix actionable findings before returning. Report only checks actually run. Reserve enough context and time for the final JSON."
+    $promptText += "`nDo the work with tools BEFORE emitting the final envelope. An edit charter starts by reading the target file with read_file and applying changes with search_replace. Never end turn 1 with files_changed empty and a self_check like 'reading sources first' - an implementation envelope with zero tool calls and zero file changes is a dead lane and is rejected outright. Use your tools first, then report."
     if ($env:OS -eq "Windows_NT") { $promptText += $windowsShellGuidance }
     if ($bashCapable) { $promptText += " You have a real terminal in an isolated worktree -- use it to VERIFY YOUR OWN WORK before returning: run the build/typecheck for the package(s) you touched and the tests that exercise your change, read the failures, and fix them so you hand off green. A new or heavily-changed source file that you never compiled/typechecked is not done. Prefer the smallest command that proves your slice (the touched package's build + your focused tests) over re-running the entire monorepo suite every pass. The manager still runs the authoritative barrier gate once; arriving already-green just saves repair rounds. Do NOT spawn nested coding agents (codex/grok/claude) and do NOT run destructive or repo-wide mutations outside your locked scope." }
   }
@@ -844,6 +845,20 @@ try {
   $auditValid = [bool]$auditCheck.valid
   $observedManifestAvailable = [bool]$auditCheck.observed_manifest_available
 
+  # Dead lane (fleet-wiki-20260815): an implementation worker that ends turn 1 with a
+  # bootstrap envelope - zero tool calls AND zero observed file changes - never did the
+  # work. The 'blocked' variant otherwise passes structured-audit and was silently
+  # accepted as status ok; the 'partial' variant hid inside needs_gate_validation noise.
+  # Only fires when the manifest is observable (git) so zero-change is a POSITIVE fact,
+  # not "could not observe". A genuinely blocked lane reads the target first
+  # (tool_call_count > 0) and is unaffected.
+  $toolCallCount = [int]$logEvidence.tool_call_count
+  $observedChangeCount = if ($null -ne $observedChangedFiles) { @($observedChangedFiles).Count } else { 0 }
+  $deadLaneWorkerStatus = if ($null -ne $structured -and (@($structured.PSObject.Properties.Name) -contains 'status')) { [string]$structured.status } else { 'unknown' }
+  # $payloadPresent excludes empty-output (a distinct 'report' failure): a dead lane
+  # returns a NON-empty bootstrap envelope but never did the work.
+  $isDeadLane = (-not $Review) -and ($null -ne $envelope) -and $payloadPresent -and ($exitCode -eq 0) -and $observedManifestAvailable -and ($observedChangeCount -eq 0) -and ($toolCallCount -eq 0)
+
   $status = "error"
   $reason = $null
   $failureCategory = $null
@@ -862,6 +877,12 @@ try {
   elseif ($exitCode -ne 0) { $failureCategory = "transport"; $reason = "Grok exited with code $exitCode." }
   elseif ($null -eq $envelope) { $failureCategory = "report"; $reason = "Grok returned invalid JSON." }
   elseif ($observedModel -ne $ExpectedModel) { $failureCategory = "model"; $reason = "Observed Grok model mismatch or missing model evidence." }
+  elseif ($isDeadLane) {
+    # Loud, retryable failure. Old behavior: 'blocked' bootstrap reported status ok (silent
+    # accept); 'partial' bootstrap reported needs_gate_validation. Both wasted a dispatch.
+    $failureCategory = "dead_lane"
+    $reason = "Grok returned a bootstrap envelope without doing the work: 0 tool calls and 0 observed file changes on an implementation lane (worker status '$deadLaneWorkerStatus'). The turn ended before any edit. Re-dispatch this charter; do not accept."
+  }
   elseif ($Review) {
     # D2: read-only success requires nonblank markdown text and verified model evidence.
     if ([string]::IsNullOrWhiteSpace($responseText)) {
@@ -949,6 +970,7 @@ try {
     gate_validation_required = [bool]$gateValidationRequired
     self_audit_missing = [bool]$selfAuditMissing
     self_audit_missing_note = $selfAuditMissingNote
+    dead_lane = [bool]$isDeadLane
     observed_manifest_available = [bool]$observedManifestAvailable
     audit = $resultAudit
     response = $responseText

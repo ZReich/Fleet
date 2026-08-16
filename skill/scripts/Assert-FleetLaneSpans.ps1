@@ -43,6 +43,13 @@ function Format-Summary {
 
 $cliExpected = @(Normalize-ExpectedLaneIds $ExpectedLaneId)
 $manifestSource = ''; $authorityNotes = New-Object System.Collections.ArrayList
+# Optional phase scope (fleet-wiki-20260815): the ledger (BENCH-lanes.jsonl) accumulates
+# EVERY phase of a run_id (plan/implement/research/integrate/review). A phase-scoped manifest
+# (e.g. the review-integrity effective manifest lists only review lanes) must gate only its
+# own phase(s), or every off-phase row reads as 'unexpected' and the exact-set gate FAILS an
+# honest re-attestation. When the manifest carries "phases", rows outside those phases are
+# ignored; absent "phases" keeps the historical run-wide behavior.
+$manPhases = @()
 $hasManifest = -not [string]::IsNullOrWhiteSpace($ExpectedLaneManifest)
 $hasCli = $cliExpected.Count -gt 0
 if ($hasManifest) {
@@ -61,6 +68,13 @@ if ($hasManifest) {
     $manLanes = @($manifestObj.expected_lanes | ForEach-Object { [string]$_ })
   }
   $expected = @(Normalize-ExpectedLaneIds $manLanes); $manifestSource = $ExpectedLaneManifest
+  if ($manifestObj.PSObject.Properties['phases'] -and $null -ne $manifestObj.phases) {
+    $rawPhases = @($manifestObj.phases | ForEach-Object { ([string]$_).Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $seenPhase = @{}; $phaseList = New-Object System.Collections.ArrayList
+    foreach ($p in $rawPhases) { if (-not $seenPhase.ContainsKey($p)) { $seenPhase[$p] = $true; [void]$phaseList.Add($p) } }
+    $manPhases = @($phaseList)
+    if ($manPhases.Count -gt 0) { [void]$authorityNotes.Add('phase-scoped gate: phases=[' + (($manPhases | Sort-Object) -join ',') + ']') }
+  }
   if ($hasCli) {
     $cliSet = ($cliExpected | Sort-Object) -join ','; $manSet = ($expected | Sort-Object) -join ','
     if ($cliSet -ne $manSet) { [void]$authorityNotes.Add("ExpectedLaneId ignored; ExpectedLaneManifest is authority (cli=[$cliSet] manifest=[$manSet])") }
@@ -146,6 +160,13 @@ foreach ($line in $lines) {
   if ($obj.PSObject.Properties['lane_id']) { $rowLane = [string]$obj.lane_id }
 
   if ($rowRun -ne $RunId) { continue }
+
+  # Phase scope: when the manifest declares phases, a row in another phase is out of this
+  # gate's scope entirely (not unexpected). Rows missing a phase are never silently in-scope.
+  if ($manPhases.Count -gt 0) {
+    $rowPhase = if ($obj.PSObject.Properties['phase']) { [string]$obj.phase } else { '' }
+    if ($rowPhase -notin $manPhases) { continue }
+  }
 
   if ([string]::IsNullOrWhiteSpace($rowLane)) {
     $invalid++

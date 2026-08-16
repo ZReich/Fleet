@@ -14,9 +14,9 @@ function Case([string]$n, [scriptblock]$b) {
   catch { $script:failed++; Write-Host "FAIL $n - $($_.Exception.Message)" }
 }
 function New-ValidSpan {
-  param([string]$LaneId, [string]$Status = 'ok', [string]$Rid = $RunId)
+  param([string]$LaneId, [string]$Status = 'ok', [string]$Rid = $RunId, [string]$Phase = 'impl')
   [pscustomobject][ordered]@{
-    schema_version = '1'; run_id = $Rid; lane_id = $LaneId; phase = 'impl'
+    schema_version = '1'; run_id = $Rid; lane_id = $LaneId; phase = $Phase
     'gen_ai.operation.name' = 'invoke_agent'; 'gen_ai.agent.name' = 'grok-4.6'
     'gen_ai.provider.name' = 'xai'; 'gen_ai.request.model' = 'grok-4.6'
     'gen_ai.response.model' = $null; 'gen_ai.usage.input_tokens' = $null
@@ -241,6 +241,29 @@ try {
     $after = [IO.File]::ReadAllBytes($man)
     Assert-True ($before.Length -eq $after.Length) 'length changed'
     for ($i = 0; $i -lt $before.Length; $i++) { Assert-True ($before[$i] -eq $after[$i]) "byte $i" }
+  }
+  Case 'phase-scoped manifest gates only its phase; off-phase rows ignored (fleet-wiki-20260815)' {
+    $ledger = Join-Path $root 'phase-scope.jsonl'
+    $reviewLanes = @('v-sol', 'v-glm', 'v-opus')
+    $rows = @(); foreach ($id in $reviewLanes) { $rows += (New-ValidSpan -LaneId $id -Phase 'review') }
+    # Off-phase rows under the SAME run_id (the shared ledger holds every phase). A review-scoped
+    # manifest must ignore these, not flag them 'unexpected'.
+    $rows += (New-ValidSpan -LaneId 'grok-writer-t2' -Phase 'implement')
+    $rows += (New-ValidSpan -LaneId 'grok-planner' -Phase 'plan')
+    Write-Ledger $ledger $rows
+    # Scoped manifest: expected review lanes + phases=[review].
+    $man = Join-Path $root 'phase-scope.manifest.json'
+    [IO.File]::WriteAllText($man, (([ordered]@{ run_id = $RunId; expected_lanes = @($reviewLanes); phases = @('review') }) | ConvertTo-Json -Compress -Depth 4), $utf8)
+    $run = Invoke-Gate -LedgerPath $ledger -Mode json -OmitExpectedLaneId -ExpectedLaneManifest $man
+    Assert-True ($run.ExitCode -eq 0) "phase-scoped ok: $($run.Raw)"
+    $o = $run.Raw | ConvertFrom-Json
+    Assert-True ($o.expected -eq 3 -and $o.valid -eq 3 -and $o.unexpected -eq 0 -and $o.verdict -eq 'ok') "scoped counts: $($run.Raw)"
+    # Back-compat control: SAME ledger, manifest WITHOUT phases -> off-phase rows are unexpected -> FAILED.
+    $man2 = Join-Path $root 'no-phase.manifest.json'
+    [IO.File]::WriteAllText($man2, (([ordered]@{ run_id = $RunId; expected_lanes = @($reviewLanes) }) | ConvertTo-Json -Compress -Depth 4), $utf8)
+    $run2 = Invoke-Gate -LedgerPath $ledger -Mode json -OmitExpectedLaneId -ExpectedLaneManifest $man2
+    $o2 = $run2.Raw | ConvertFrom-Json
+    Assert-True ($run2.ExitCode -eq 1 -and $o2.unexpected -eq 2 -and $o2.verdict -eq 'FAILED') "run-wide control: $($run2.Raw)"
   }
   $total = $passed + $failed
   if ($total -eq 0) { Write-Host 'FAIL: suite collected 0 cases'; exit 1 }

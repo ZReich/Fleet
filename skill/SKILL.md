@@ -199,8 +199,15 @@ anti-serialization validation gate.
   round; a 0-byte or missing lane output is a dead lane — substitute immediately
   with a labeled voice (record `voice_substituted`), never a silent ad-hoc file.
 - Sol is plan + final verdict by default. If Sol (or any voice) times out as a
-  review voice, substitute instantly (Terra or GLM, labeled `voice_substituted`)
-  and let the round complete — never hold a round waiting on a dead voice.
+  review voice — OR its receipt fails the verdict grammar again after its one full
+  redispatch (a voice that cannot emit the machine terminal block is non-responsive
+  for panel purposes; adopted 2026-08-16 after fleet-wiki-20260815 Sol grammar-invalid
+  ×2) — substitute instantly (Terra or GLM, labeled `voice_substituted`) and let the
+  round complete, so the panel keeps quorum instead of going UNCERTIFIED on a
+  formatting quirk. This is substitution, NOT a clarify re-prompt, so the Sol-lock
+  below (no re-prompt to clarify a malformed verdict) stands. Sol still owns
+  arbitration + the final verdict; only its blind panel seat is filled.
+  Never hold a round waiting on a dead voice.
 - **Efficiency contract (Sol-locked 2026-08-11 — [references/review-efficiency.md](references/review-efficiency.md)):**
   charters come ONLY from `scripts/New-FleetReviewCharter.ps1` (embeds the single-source
   verdict grammar of `FleetReviewGrammar.Helpers.ps1`); lint the packet with

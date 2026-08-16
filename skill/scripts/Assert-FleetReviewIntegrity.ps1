@@ -36,7 +36,7 @@ function Get-ReceiptModelKey($r) {
   return (Get-VoiceModelKey $src)
 }
 function Format-Summary([string]$Rid,[int]$H,[int]$R,[int]$C,[string]$Verdict) { return "review-integrity: $Rid | hosted: $H | refused: $R | open-weight-failovers: $C/$R | verdict: $Verdict" }
-function Write-EffectiveManifest([string]$Path,[string]$Rid,[string[]]$Lanes) {
+function Write-EffectiveManifest([string]$Path,[string]$Rid,[string[]]$Lanes,[string[]]$Phases=@('review')) {
   $sb = New-Object System.Text.StringBuilder
   [void]$sb.Append(('{"run_id":' + (ConvertTo-Json -InputObject ([string]$Rid) -Compress) + ',"expected_lanes":['))
   $first = $true
@@ -44,7 +44,18 @@ function Write-EffectiveManifest([string]$Path,[string]$Rid,[string[]]$Lanes) {
     if (-not $first) { [void]$sb.Append(',') }; $first = $false
     [void]$sb.Append((ConvertTo-Json -InputObject ([string]$id) -Compress))
   }
-  [void]$sb.Append(']}')
+  [void]$sb.Append(']')
+  # Phase scope: this manifest lists ONLY review voice lanes, but the shared span ledger holds
+  # every phase under one run_id. Stamp the scope so Assert-FleetLaneSpans gates review lanes
+  # only (fleet-wiki-20260815 — without this, impl/plan/research rows read as 'unexpected').
+  $ph = @($Phases | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ })
+  if ($ph.Count -gt 0) {
+    [void]$sb.Append(',"phases":[')
+    $pf = $true
+    foreach ($p in $ph) { if (-not $pf) { [void]$sb.Append(',') }; $pf = $false; [void]$sb.Append((ConvertTo-Json -InputObject ([string]$p) -Compress)) }
+    [void]$sb.Append(']')
+  }
+  [void]$sb.Append('}')
   $parent = Split-Path -Parent $Path
   if ($parent -and -not (Test-Path -LiteralPath $parent)) { New-Item -ItemType Directory -Force -Path $parent | Out-Null }
   $fs = [IO.File]::Open($Path, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)

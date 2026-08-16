@@ -106,13 +106,23 @@ try {
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'renew-test'
   }
 
-  Case 'dead owner PID lease is reclaimed despite fresh expiry' {
+  Case 'dead owner PID does NOT reclaim a fresh-heartbeat lease; stale heartbeat does' {
+    # fleet-wiki-20260815: owner_pid defaults to the transient parent shell of Enter, which
+    # exits the instant Enter returns, so a LIVE run routinely records an already-dead owner
+    # PID. A fresh heartbeat must keep the lease live (reclaiming on dead-PID-alone clobbered
+    # live leases + refused key loads). Only a STALE heartbeat reclaims.
     $lr = LeaseRoot
     # 999990 is never a live Windows PID (not multiple of 4).
-    Write-JsonFile (Join-Path $lr 'deadpid.json') @{schema_version='1';run_id='deadpid';owner_pid=999990;started_at=[datetimeoffset]::Now.ToString('o');heartbeat_at=[datetimeoffset]::Now.ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')}
-    $path = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'deadpid-fresh'
-    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $lr 'deadpid.json'))) 'dead-owner-PID lease was not reclaimed'
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'deadpid-fresh'
+    Write-JsonFile (Join-Path $lr 'deadpid-live.json') @{schema_version='1';run_id='deadpid-live';owner_pid=999990;started_at=[datetimeoffset]::Now.ToString('o');heartbeat_at=[datetimeoffset]::Now.ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')}
+    $null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'deadpid-probe'
+    Assert-True (Test-Path -LiteralPath (Join-Path $lr 'deadpid-live.json')) 'fresh-heartbeat lease with a dead owner PID was wrongly reclaimed'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'deadpid-probe'
+    Remove-Item -LiteralPath (Join-Path $lr 'deadpid-live.json') -Force -ErrorAction SilentlyContinue
+    # Dead PID + stale heartbeat is genuinely abandoned -> reclaimed.
+    Write-JsonFile (Join-Path $lr 'deadpid-stale.json') @{schema_version='1';run_id='deadpid-stale';owner_pid=999990;started_at=[datetimeoffset]::Now.AddHours(-3).ToString('o');heartbeat_at=[datetimeoffset]::Now.AddHours(-3).ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')}
+    $path = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $enter -RunId 'deadpid-stale-fresh'
+    Assert-True ($LASTEXITCODE -eq 0 -and -not (Test-Path -LiteralPath (Join-Path $lr 'deadpid-stale.json'))) 'dead-owner-PID + stale-heartbeat lease was not reclaimed'
+    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $exit -RunId 'deadpid-stale-fresh'
   }
 
   Case 'stale heartbeat lease is reclaimed but a live lease survives' {
@@ -180,7 +190,9 @@ try {
   }
 
   Case '-ReclaimStale prunes a dead lease without starting a run' {
-    Write-JsonFile (Join-Path (LeaseRoot) 'orphan.json') @{schema_version='1';run_id='orphan';owner_pid=999990;started_at=[datetimeoffset]::Now.ToString('o');heartbeat_at=[datetimeoffset]::Now.ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')}
+    # Abandoned = stale heartbeat (dead owner PID alone no longer reclaims; owner_pid is the
+    # transient parent shell and is unreliable). fleet-wiki-20260815.
+    Write-JsonFile (Join-Path (LeaseRoot) 'orphan.json') @{schema_version='1';run_id='orphan';owner_pid=999990;started_at=[datetimeoffset]::Now.AddHours(-3).ToString('o');heartbeat_at=[datetimeoffset]::Now.AddHours(-3).ToString('o');expires_at=[datetimeoffset]::Now.AddHours(20).ToString('o')}
     $out = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $PSCommandPath -ReclaimStale | ConvertFrom-Json
     Assert-True (($out.reclaimed -contains 'orphan') -and -not (Test-Path -LiteralPath (Join-Path $temp '.codex\fleet\run-leases\orphan.json'))) 'ReclaimStale did not prune the orphaned lease'
   }

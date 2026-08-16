@@ -15,11 +15,23 @@ function Test-FleetLeaseReclaimable($lease, [datetimeoffset]$now, [int]$staleHou
   # Unparseable expiry is treated as abandoned: a lease we cannot read cannot be trusted
   # to be alive, and the alternative is a permanently unclearable file.
   try { if ([datetimeoffset]$lease.expires_at -le $now) { return $true } } catch { return $true }
-  $leasePid = 0; try { $leasePid = [int]$lease.owner_pid } catch { }
-  if ($leasePid -gt 0 -and -not (Get-Process -Id $leasePid -ErrorAction SilentlyContinue)) { return $true }
+  # Heartbeat freshness is the liveness signal, NOT owner_pid alone.
+  # fleet-wiki-20260815: owner_pid defaults to the PARENT shell that invoked Enter, which
+  # exits the instant Enter returns (no production caller passes a stable -OwnerPid). So a
+  # LIVE run routinely records an already-dead owner PID. Reclaiming on dead-PID-alone
+  # (the old second clause) therefore (a) let a late Enter sweep CLOBBER a live lease -
+  # deleting its HMAC key mid-run and invalidating already-signed receipts - and (b) made
+  # Get-FleetRunLeaseKey REFUSE the key load for a live run. A dead owner PID now only
+  # counts toward reclaim when the heartbeat is ALSO stale/absent; a fresh heartbeat is
+  # positive liveness that overrides a dead PID. Matches Test-FleetOwnerConclusivelyDead.
   $hb = $null; try { $hb = [datetimeoffset]$lease.heartbeat_at } catch { }
-  if ($null -ne $hb -and $hb.AddHours($staleHours) -le $now) { return $true }
-  return $false
+  # Absent/unparseable heartbeat cannot prove liveness: treat as abandoned (with dead/absent
+  # heartbeat there is no freshness to override anything, matching prior fail-closed intent).
+  if ($null -eq $hb) { return $true }
+  # Fresh heartbeat = LIVE, regardless of owner_pid state.
+  if ($hb.AddHours($staleHours) -gt $now) { return $false }
+  # Stale heartbeat = abandoned (owner alive or dead no longer matters after the window).
+  return $true
 }
 
 # Janitor-only liveness-read: reclaim ONLY when owner is CONCLUSIVELY dead.

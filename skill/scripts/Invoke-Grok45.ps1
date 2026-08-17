@@ -51,6 +51,9 @@ param(
   [int]$FirstTurnTimeoutSeconds = 0
 )
 
+# Emit UTF-8 on stdout/stderr regardless of console codepage (parents decode as UTF-8).
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 $ErrorActionPreference = "Stop"
 $ExpectedModel = "grok-4.6"
 $proc = $null
@@ -336,6 +339,7 @@ function Invoke-BashCapabilityProbe {
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
   foreach ($name in $compatEnvNames) { $psi.EnvironmentVariables[$name] = "false" }
   $psi.EnvironmentVariables["FLEET_GROK_RUN"] = "1"
@@ -770,6 +774,7 @@ try {
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = -not $Visible
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
   # Codex may set both variables. Node then warns on stderr, and Windows
   # PowerShell can convert that harmless warning into a failed native command.

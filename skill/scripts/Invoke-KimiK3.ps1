@@ -67,6 +67,9 @@ param(
   [string]$Thinking = 'high'
 )
 
+# Emit UTF-8 on stdout/stderr regardless of console codepage (parents decode as UTF-8).
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 $ErrorActionPreference = "Stop"
 $ExpectedModel = "kimi-code/k3"
 $fleetTerseOutputTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'

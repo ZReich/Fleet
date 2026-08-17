@@ -32,6 +32,9 @@ param(
   [switch]$KeepSession
 )
 
+# Emit UTF-8 on stdout/stderr regardless of console codepage (parents decode as UTF-8).
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 $ErrorActionPreference = "Stop"
 $ExpectedProvider = "zai"
 # Z.ai serves glm-5.3 (unknown model codes 400 "modelCode: does not exist"; 5.3 answers).
@@ -193,6 +196,7 @@ try {
   $psi.UseShellExecute = $false
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
   $psi.CreateNoWindow = $true
   # Resolve the tree to run in (L321c). Explicit -WorkingDirectory pins the lane to its

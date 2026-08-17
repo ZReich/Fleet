@@ -51,6 +51,57 @@ function Get-FleetGrammarTerminalLines([string]$Text) {
   return @{ Block = @($block); Before = $before }
 }
 
+# Lossless punctuation transliteration for the TERMINAL BLOCK only (from the last 'VERDICT:'
+# line to EOF). GLM 5.3 reliably emits U+2014/U+2192/curly quotes in finding summaries and the
+# strict parser rightly rejects non-ASCII there (2026-08-15 x2, 2026-08-16 x2 = both GLM seats
+# lost, panel 4/5). This does NOT relax the parser: it maps typographic punctuation to its ASCII
+# equivalent (em dash -> '-', arrow -> '->', curly quote -> '"') and leaves any other non-ASCII
+# untouched so the parser still fails closed on real garbage. Body text above the block is never
+# modified. Callers keep the raw bytes beside the normalized result.
+$script:FleetAsciiPunctuationMap = [ordered]@{
+  ([string][char]0x2014) = '-'    # em dash
+  ([string][char]0x2013) = '-'    # en dash
+  ([string][char]0x2012) = '-'    # figure dash
+  ([string][char]0x2212) = '-'    # minus sign
+  ([string][char]0x2192) = '->'   # rightwards arrow
+  ([string][char]0x21D2) = '=>'   # rightwards double arrow
+  ([string][char]0x2190) = '<-'   # leftwards arrow
+  ([string][char]0x2194) = '<->'  # left right arrow
+  ([string][char]0x2018) = "'"    # left single quote
+  ([string][char]0x2019) = "'"    # right single quote
+  ([string][char]0x201C) = '"'    # left double quote
+  ([string][char]0x201D) = '"'    # right double quote
+  ([string][char]0x2026) = '...'  # ellipsis
+  ([string][char]0x00A0) = ' '    # nbsp
+  ([string][char]0x2022) = '-'    # bullet
+  ([string][char]0x00D7) = 'x'    # multiplication sign
+  ([string][char]0x2264) = '<='   # less-than-or-equal
+  ([string][char]0x2265) = '>='   # greater-than-or-equal
+  ([string][char]0x2260) = '!='   # not-equal
+}
+
+function ConvertTo-FleetAsciiTerminalBlock([string]$Text) {
+  # Returns @{ Text = <normalized>; Changed = <bool>; Replacements = <int> }.
+  if ([string]::IsNullOrWhiteSpace($Text)) { return @{ Text = $Text; Changed = $false; Replacements = 0 } }
+  $lines = [regex]::Split($Text, '\r?\n')
+  $vIdx = -1
+  for ($i = $lines.Count - 1; $i -ge 0; $i--) {
+    if ($lines[$i].Trim() -cmatch '^VERDICT:') { $vIdx = $i; break }
+  }
+  if ($vIdx -lt 0) { return @{ Text = $Text; Changed = $false; Replacements = 0 } }
+  $n = 0
+  for ($i = $vIdx; $i -lt $lines.Count; $i++) {
+    $l = $lines[$i]
+    foreach ($k in $script:FleetAsciiPunctuationMap.Keys) {
+      $c = ([regex]::Matches($l, [regex]::Escape($k))).Count
+      if ($c -gt 0) { $n += $c; $l = $l.Replace($k, [string]$script:FleetAsciiPunctuationMap[$k]) }
+    }
+    $lines[$i] = $l
+  }
+  $nl = if ($Text -match "`r`n") { "`r`n" } else { "`n" }
+  return @{ Text = ($lines -join $nl); Changed = ($n -gt 0); Replacements = $n }
+}
+
 function Test-FleetGrammarBodyCleanForLegacyGo([string]$Body) {
   # Legacy alias is valid ONLY when the body carries no finding/negative/refusal signal.
   if ($Body -cmatch '\b(CRITICAL|HIGH|MEDIUM|LOW)\b') { return $false }
@@ -111,7 +162,7 @@ function Parse-FleetReviewVerdict([string]$Text) {
       for ($i = 2; $i -lt $block.Count; $i++) {
         $ln = $block[$i]
         # Path must be normalized repo-relative (no roots, no traversal), line >= 1 (Sol M4).
-        if ($ln -cmatch '^- (CRITICAL|HIGH|MEDIUM|LOW) \| [A-Za-z0-9._-]+ \| (?![A-Za-z]:)(?!/)(?!\\)(?!.*\.\.)[^|\s]+:[1-9]\d* \| .+$') { $findings += $Matches[1] }
+        if ($ln -cmatch '^- (CRITICAL|HIGH|MEDIUM|LOW) \| [A-Za-z0-9._-]+ \| (?![A-Za-z]:)(?!/)(?!\\)(?![^|\s]*\.\.)[^|\s]+:[1-9]\d* \| .+$') { $findings += $Matches[1] }
         else { [void]$err.Add("malformed finding line: $ln") }
       }
     } else { [void]$err.Add("malformed FINDINGS line: $fLine") }

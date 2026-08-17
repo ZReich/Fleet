@@ -36,6 +36,9 @@ param(
   [int]$HeartbeatSeconds = 30
 )
 
+# Emit UTF-8 on stdout/stderr regardless of console codepage (parents decode as UTF-8).
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 $ErrorActionPreference = "Stop"
 $ExpectedModel = $Model
 $fleetTerseOutputTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
@@ -87,6 +90,7 @@ function Invoke-ClaudeProbe {
   $psi.UseShellExecute = $false
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
   $psi.EnvironmentVariables['DISABLE_UPDATES'] = '1'
   $candidate = [Diagnostics.Process]::Start($psi)
@@ -312,6 +316,7 @@ try {
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
   # Fleet owns promotion. Prevent Claude's normal startup/periodic updater from
   # replacing the approved executable while this review lane is running.

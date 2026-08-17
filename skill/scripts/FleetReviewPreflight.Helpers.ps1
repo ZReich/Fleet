@@ -183,8 +183,14 @@ function Invoke-FleetDefaultVoiceProbe {
           } catch { $bits += 'kimi credential unreadable' }
         }
         # Unsupported -Repo must be rejected (correct param is -RepoSandbox).
-        $repoOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $meta.WrapperPath -Repo bogus -Prompt 'x' 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0) { $bits += 'unsupported -Repo was accepted' }
+        # Child stderr (the expected binding error) must not become terminating under
+        # $ErrorActionPreference='Stop' -- that false-failed the probe with 'exit 1' (2026-08-16).
+        $prevEap = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+        try {
+          $repoOut = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $meta.WrapperPath -Repo bogus -Prompt 'x' 2>&1 | Out-String
+          $repoExit = $LASTEXITCODE
+        } finally { $ErrorActionPreference = $prevEap }
+        if ($repoExit -eq 0) { $bits += 'unsupported -Repo was accepted' }
         if ($bits.Count -eq 0) { $exitCode = 0; $output = 'kimi-security auth+param validation OK' }
         else { $exitCode = 1; $output = ($bits -join '; ') }
       }

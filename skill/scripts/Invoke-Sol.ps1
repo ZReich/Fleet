@@ -45,6 +45,9 @@ param(
   [switch]$SkipGitRepoCheck
 )
 
+# Emit UTF-8 on stdout/stderr regardless of console codepage (parents decode as UTF-8).
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
 $ErrorActionPreference = 'Stop'
 $fleetTerseTrailer = 'OUTPUT STYLE (mandatory): terse ' + [char]0x2014 + ' drop articles, filler, pleasantries, hedging; fragments OK; technical substance exact; code, diffs, JSON, file:line references verbatim and complete. Compress prose, never evidence.'
 $proc = $null
@@ -187,6 +190,7 @@ try {
   $psi.CreateNoWindow = $true
   $psi.RedirectStandardInput = $true
   $psi.RedirectStandardOutput = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $psi.RedirectStandardError = $true
 
   $proc = New-Object Diagnostics.Process

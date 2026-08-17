@@ -41,6 +41,7 @@ $utf8 = New-Object System.Text.UTF8Encoding $false
 . (Join-Path $PSScriptRoot 'RunLease.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'FleetLaneRefusal.Helpers.ps1')
 . (Join-Path $PSScriptRoot 'FleetReviewVoice.Helpers.ps1')
+. (Join-Path $PSScriptRoot 'FleetReviewGrammar.Helpers.ps1')
 
 function Fail([string]$Msg) {
   [Console]::Error.WriteLine(('signed-lane: {0}' -f $Msg)); exit 1
@@ -87,6 +88,7 @@ function Invoke-AllowlistedWrapper([string]$ScriptPath, [string]$PromptText, [st
   $psi.Arguments = (($tokens | ForEach-Object { Quote-Arg ([string]$_) }) -join ' ')
   $psi.UseShellExecute = $false; $psi.CreateNoWindow = $true
   $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
+  $psi.StandardOutputEncoding = [Text.Encoding]::UTF8; $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
   $p = [Diagnostics.Process]::Start($psi)
   $stdout = $p.StandardOutput.ReadToEnd(); $stderr = $p.StandardError.ReadToEnd()
   $p.WaitForExit()
@@ -252,6 +254,14 @@ try {
   if ($null -ne $envelope -and $envelope.PSObject.Properties['response'] -and $null -ne $envelope.response) {
     $resultBody = [string]$envelope.response
   } else { $resultBody = [string]$run.Out }
+  # Terminal-block punctuation transliteration (typographic -> ASCII, meaning-preserving) so a
+  # correct verdict is not lost to an em dash; raw bytes kept beside the result for audit.
+  $ascii = ConvertTo-FleetAsciiTerminalBlock $resultBody
+  if ($ascii.Changed) {
+    Write-CreateNew ($outResult -replace '\.md$', '.raw.md') $resultBody
+    $resultBody = [string]$ascii.Text
+    [Console]::Error.WriteLine(("signed-lane: terminal block normalized: {0} typographic char(s) -> ASCII (raw kept)" -f $ascii.Replacements))
+  }
   Write-CreateNew $outResult $resultBody
   $wroteResult = $true
   $resultSha = Get-Sha256Hex ($utf8.GetBytes($resultBody))
